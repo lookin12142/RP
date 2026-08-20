@@ -144,12 +144,67 @@
     letter-spacing: .06em; color: var(--muted); margin-bottom: 4px; display:block;
   }
 
+  /* ---- gráficos embebidos en mensajes ---- */
+  .bubble.grafico-bubble{ max-width: 100%; margin-left: 0; background: rgba(52,211,153,0.05); }
+  .grafico-card{ display:flex; flex-direction:column; gap:10px; }
+  .grafico-title{ font-size: 13.5px; font-weight:600; color: var(--text); }
+  .grafico-comment{
+    font-size: 12.5px; color: var(--muted); line-height:1.5;
+    border-top: 1px dashed var(--border); padding-top: 8px; margin-top: 2px;
+  }
+  .grafico-empty{ font-size:12.5px; color: var(--muted); font-family: var(--mono); }
+
+  .grafico-legend{ display:flex; flex-wrap:wrap; gap:12px; font-size:11.5px; color: var(--muted); }
+  .grafico-legend-item{ display:flex; align-items:center; gap:6px; }
+  .grafico-legend-item i{ width:10px; height:10px; border-radius:2px; display:inline-block; }
+
+  .grafico-bars{ display:flex; flex-direction:column; gap:10px; }
+  .grafico-bar-row{ display:grid; grid-template-columns: minmax(110px,180px) 1fr auto; align-items:center; gap:10px; }
+  .grafico-bar-label{
+    font-size:12px; color: var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .grafico-bar-tracks{ display:flex; flex-direction:column; gap:3px; }
+  .grafico-bar-track{
+    position:relative; height:12px; background: var(--panel-2); border-radius:4px; overflow:hidden;
+  }
+  .grafico-bar-fill{ height:100%; border-radius:4px; min-width:2px; }
+  .grafico-bar-value{
+    font-family: var(--mono); font-size:11.5px; color: var(--text); text-align:right; min-width: 70px;
+  }
+  .grafico-axis-label{
+    font-family: var(--mono); font-size:10.5px; color: var(--muted); text-transform:uppercase; letter-spacing:.05em;
+  }
+
+  .grafico-tabla-detalle{ margin-top:4px; }
+  .grafico-tabla-detalle summary{
+    cursor:pointer; font-family: var(--mono); font-size:11px; color: var(--accent);
+    text-transform:uppercase; letter-spacing:.04em;
+  }
+  .grafico-tabla-detalle summary::marker{ color: var(--accent); }
+  .grafico-tabla{ margin-top:8px; }
+
   .empty-hint{
     color: var(--muted); font-size: 13px; padding: 40px 10px; text-align:center;
     font-family: var(--mono);
   }
 
-  /* ---- reporte inteligente ---- */
+  /* ---- reporte inteligente (hoy vivo / histórico) ---- */
+  .panel-head{
+    display:flex; align-items:center; justify-content: space-between;
+    flex-wrap: wrap; gap: 10px; margin-bottom: 16px;
+  }
+  .panel-head h2{ margin: 0; }
+  select.fecha-select{
+    font-family: var(--mono); font-size: 12px; background: var(--panel-2);
+    color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 10px; cursor: pointer;
+  }
+  .badge-live{
+    font-family: var(--mono); font-size: 10px; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--assistant); background: rgba(52,211,153,0.1);
+    border: 1px solid rgba(52,211,153,0.3); padding: 2px 8px; border-radius: 999px;
+  }
+
   .resumen-ia{
     font-size: 13.5px; line-height: 1.6; color: var(--text); margin-bottom: 20px;
     padding: 14px 16px; background: var(--panel-2); border-left: 3px solid var(--accent);
@@ -246,21 +301,38 @@
     </div>
   </section>
   <section class="panel">
-    <h2>Reporte inteligente del día</h2>
-    <div id="inteligente">
-      <div class="empty-hint">Cargando análisis de IA... puede tardar un poco.</div>
+    <div class="panel-head">
+      <h2>Hoy en vivo</h2>
+      <span class="badge-live">● SQL en vivo, sin IA</span>
+    </div>
+    <div id="hoyVivo">
+      <div class="empty-hint">Cargando...</div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Reporte inteligente por fecha</h2>
+      <select class="fecha-select" id="selectFecha">
+        <option value="">Cargando fechas...</option>
+      </select>
+    </div>
+    <div id="historico">
+      <div class="empty-hint">Elegí una fecha para ver el análisis de ese día.</div>
     </div>
   </section>
 
 </div>
 
 <script>
-// ---- Configurá acá las URLs reales de tus 3 webhooks de n8n ----
+// ---- Configurá acá las URLs reales de tus webhooks de n8n ----
 const API = {
   diario: 'https://n8n.smartclic.pe/webhook/reporte-conversaciones-diario',
   lista: 'https://n8n.smartclic.pe/webhook/reporte-conversaciones-lista',
   mensajes: 'https://n8n.smartclic.pe/webhook/reporte-conversacion-mensajes',
-  inteligente: 'https://n8n.smartclic.pe/webhook/reporte-inteligente'
+  hoyVivo: 'https://n8n.smartclic.pe/webhook/reporte-hoy-vivo',
+  fechas: 'https://n8n.smartclic.pe/webhook/reporte-inteligente-fechas',
+  historico: 'https://n8n.smartclic.pe/webhook/reporte-inteligente-historico'
 };
 
 const $totals = document.getElementById('totals');
@@ -403,6 +475,18 @@ function pintarTranscripcion(data){
   }
   const bubbles = mensajes.map(m => {
     const isUser = (m.sender || '').toLowerCase() === 'user';
+    const grafico = !isUser ? parseGrafico(m.text) : null;
+
+    if (grafico){
+      return `
+        <div class="bubble assistant grafico-bubble">
+          <span class="sender-label">Asistente</span>
+          ${renderGrafico(grafico)}
+          <span class="ts">${fmtDateTime(m.created_at)}</span>
+        </div>
+      `;
+    }
+
     return `
       <div class="bubble ${isUser ? 'user' : 'assistant'}">
         <span class="sender-label">${isUser ? 'Usuario' : 'Asistente'}</span>
@@ -427,26 +511,161 @@ function escapeHtml(str){
   return div.innerHTML;
 }
 
-async function cargarInteligente(){
-  const $el = document.getElementById('inteligente');
-  $el.innerHTML = '<div class="empty-hint">Analizando conversaciones con IA... puede tardar 10-30 segundos.</div>';
+function formatNumero(n){
+  const num = Number(n);
+  return isNaN(num) ? String(n ?? '-') : num.toLocaleString('es-PE');
+}
+
+// El backend manda el gráfico como JSON serializado dentro de m.text (mensajes del asistente).
+function parseGrafico(text){
+  if (!text || typeof text !== 'string') return null;
+  const t = text.trim();
+  if (!t.startsWith('{')) return null;
   try{
-    const res = await fetch(API.inteligente);
+    const obj = JSON.parse(t);
+    if (obj && obj.tipo_grafico && Array.isArray(obj.items)) return obj;
+  }catch(e){ /* no era JSON de gráfico, se muestra como texto normal */ }
+  return null;
+}
+
+function renderGrafico(g){
+  const items = Array.isArray(g.items) ? g.items : [];
+  const series = (Array.isArray(g.series) && g.series.length)
+    ? g.series
+    : [{ name: g.legendY || 'Valor', color: '#5b8def' }];
+  const tipo = (g.tipo_grafico || '').toLowerCase();
+
+  let cuerpo;
+  if (!items.length){
+    cuerpo = '<div class="grafico-empty">Sin datos para graficar.</div>';
+  } else if (tipo === 'grafico_barras'){
+    cuerpo = renderBarrasHorizontales(items, series, g.legendY);
+  } else {
+    cuerpo = `<div class="grafico-empty">Tipo de gráfico "${escapeHtml(g.tipo_grafico || '?')}" aún sin visualización — datos en la tabla.</div>`;
+  }
+
+  return `
+    <div class="grafico-card">
+      ${g.titulo ? `<div class="grafico-title">${escapeHtml(g.titulo)}</div>` : ''}
+      ${cuerpo}
+      ${items.length ? renderTablaGrafico(items, series, g.legendY) : ''}
+      ${g.comentarios ? `<div class="grafico-comment">${escapeHtml(g.comentarios)}</div>` : ''}
+    </div>
+  `;
+}
+
+function renderBarrasHorizontales(items, series, legendY){
+  const max = Math.max(1, ...items.flatMap(it => (it.values || []).map(v => Number(v) || 0)));
+  const multi = series.length > 1;
+
+  const leyenda = multi
+    ? `<div class="grafico-legend">${series.map(s => `<span class="grafico-legend-item"><i style="background:${s.color || '#5b8def'}"></i>${escapeHtml(s.name || '')}</span>`).join('')}</div>`
+    : '';
+
+  const filas = items.map(it => {
+    const valores = it.values || [];
+    const tracks = series.map((s, si) => {
+      const val = Number(valores[si]) || 0;
+      const pct = Math.max((val / max) * 100, val > 0 ? 0.6 : 0);
+      return `<div class="grafico-bar-track"><div class="grafico-bar-fill" style="width:${pct}%; background:${s.color || '#5b8def'}"></div></div>`;
+    }).join('');
+    return `
+      <div class="grafico-bar-row">
+        <span class="grafico-bar-label" title="${escapeHtml(it.x ?? '')}">${escapeHtml(it.x ?? '')}</span>
+        <div class="grafico-bar-tracks">${tracks}</div>
+        <span class="grafico-bar-value">${valores.map(formatNumero).join(' / ')}</span>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    ${leyenda}
+    <div class="grafico-bars">${filas}</div>
+    ${legendY ? `<div class="grafico-axis-label">${escapeHtml(legendY)}</div>` : ''}
+    ${multi ? '<div class="grafico-axis-label">Barras a escala lineal — ver tabla para el detalle por serie.</div>' : ''}
+  `;
+}
+
+function renderTablaGrafico(items, series, legendY){
+  const cols = series.length > 1 ? series.map(s => s.name || '') : [legendY || 'Valor'];
+  const head = cols.map(c => `<th>${escapeHtml(c)}</th>`).join('');
+  const filas = items.map(it => {
+    const vals = (it.values || []).map(v => `<td>${formatNumero(v)}</td>`).join('');
+    return `<tr><td>${escapeHtml(it.x ?? '')}</td>${vals}</tr>`;
+  }).join('');
+
+  return `
+    <details class="grafico-tabla-detalle">
+      <summary>Ver tabla de datos</summary>
+      <table class="conv-table grafico-tabla">
+        <thead><tr><th>Categoría</th>${head}</tr></thead>
+        <tbody>${filas}</tbody>
+      </table>
+    </details>
+  `;
+}
+
+async function cargarHoyVivo(){
+  const $el = document.getElementById('hoyVivo');
+  $el.innerHTML = '<div class="empty-hint">Cargando...</div>';
+  try{
+    const res = await fetch(API.hoyVivo);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
-    pintarInteligente(data);
+    pintarReporte(data, 'hoyVivo');
   }catch(err){
-    $el.innerHTML = '<div class="empty-hint">No se pudo cargar el análisis (' + err.message + ')</div>';
+    $el.innerHTML = '<div class="empty-hint">No se pudo cargar (' + err.message + ')</div>';
   }
 }
 
-function pintarInteligente(data){
-  const $el = document.getElementById('inteligente');
+async function cargarFechasDisponibles(){
+  const $select = document.getElementById('selectFecha');
+  try{
+    const res = await fetch(API.fechas);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const fechas = data.fechas || [];
+    if (!fechas.length){
+      $select.innerHTML = '<option value="">Sin reportes guardados todavía</option>';
+      return;
+    }
+    $select.innerHTML = fechas.map(f => `<option value="${f.fecha}">${fmtDate(f.fecha)} — ${f.total_conversaciones ?? 0} conv.</option>`).join('');
+    cargarHistorico(fechas[0].fecha);
+  }catch(err){
+    $select.innerHTML = '<option value="">Error al cargar fechas</option>';
+  }
+}
+
+async function cargarHistorico(fecha){
+  const $el = document.getElementById('historico');
+  if (!fecha) return;
+  $el.innerHTML = '<div class="empty-hint">Cargando análisis del ' + fecha + '...</div>';
+  try{
+    const res = await fetch(API.historico + '?fecha=' + encodeURIComponent(fecha));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data.encontrado === false){
+      $el.innerHTML = '<div class="empty-hint">' + (data.mensaje || 'No hay reporte guardado para esa fecha.') + '</div>';
+      return;
+    }
+    pintarReporte(data, 'historico');
+  }catch(err){
+    $el.innerHTML = '<div class="empty-hint">No se pudo cargar (' + err.message + ')</div>';
+  }
+}
+
+document.getElementById('selectFecha').addEventListener('change', (ev) => {
+  cargarHistorico(ev.target.value);
+});
+
+function pintarReporte(data, contenedorId){
+  const $el = document.getElementById(contenedorId);
   const mc = data.metricas_clientes || {};
   const mq = data.metricas_calidad || {};
   const patrones = data.patrones || [];
   const recomendaciones = data.recomendaciones || [];
   const analisis = data.analisis_conversaciones || [];
+  const tieneIA = !!(data.resumen_general || patrones.length || analisis.length);
 
   const topConv = (mc.top_por_conversaciones || []).map(c => `
     <div class="rank-row">
@@ -472,11 +691,11 @@ function pintarInteligente(data){
       <div class="patron-desc">${escapeHtml(p.descripcion || '')}</div>
       ${p.frecuencia_aproximada ? `<div class="patron-freq">Frecuencia aprox: ${p.frecuencia_aproximada}</div>` : ''}
     </div>
-  `).join('') || '<div class="empty-hint">No se detectaron patrones.</div>';
+  `).join('');
 
   const recosHtml = recomendaciones.length
     ? `<ul class="recos">${recomendaciones.map(r => `<li>${escapeHtml(r)}</li>`).join('')}</ul>`
-    : '<div class="empty-hint">Sin recomendaciones.</div>';
+    : '';
 
   const filasConv = analisis.map(a => `
     <tr>
@@ -488,7 +707,7 @@ function pintarInteligente(data){
   `).join('');
 
   $el.innerHTML = `
-    <div class="resumen-ia">${escapeHtml(data.resumen_general || 'Sin resumen.')}</div>
+    ${data.resumen_general ? `<div class="resumen-ia">${escapeHtml(data.resumen_general)}</div>` : ''}
 
     <div class="ia-grid">
       <div>
@@ -504,33 +723,32 @@ function pintarInteligente(data){
     <div class="ia-grid">
       <div>
         <p class="subhead">Calidad de respuesta</p>
+        <div class="kv"><span>Total conversaciones</span><span class="v">${data.total_conversaciones ?? 0}</span></div>
+        <div class="kv"><span>Total mensajes</span><span class="v">${data.total_mensajes ?? 0}</span></div>
         <div class="kv"><span>Respuestas vacías</span><span class="v">${mq.porcentaje_vacias ?? 0}%</span></div>
         <div class="kv"><span>Tiempo de respuesta promedio</span><span class="v">${mq.tiempo_respuesta_promedio_seg ?? '-'}s</span></div>
         ${distribucion}
       </div>
-      <div>
-        <p class="subhead">Recomendaciones</p>
-        ${recosHtml}
-      </div>
+      ${recosHtml ? `<div><p class="subhead">Recomendaciones</p>${recosHtml}</div>` : '<div></div>'}
     </div>
 
-    <p class="subhead">Patrones detectados</p>
-    ${patronesHtml}
+    ${patronesHtml ? `<p class="subhead">Patrones detectados</p>${patronesHtml}` : ''}
 
-    <p class="subhead" style="margin-top:18px;">Análisis por conversación</p>
     ${filasConv ? `
+      <p class="subhead" style="margin-top:18px;">Análisis por conversación</p>
       <table class="conv-table">
         <thead><tr><th>Conv.</th><th>Tema</th><th>Resuelta</th><th>Satisfacción</th></tr></thead>
         <tbody>${filasConv}</tbody>
       </table>
-    ` : '<div class="empty-hint">Sin conversaciones analizadas en el rango.</div>'}
+    ` : (tieneIA ? '' : '<div class="empty-hint" style="margin-top:12px;">Este análisis no incluye patrones ni satisfacción por conversación (vista en vivo, sin IA).</div>')}
   `;
 }
 
 function cargarTodo(){
   cargarVolumen();
   cargarEntidades();
-  cargarInteligente();
+  cargarHoyVivo();
+  cargarFechasDisponibles();
 }
 
 $btnRefresh.addEventListener('click', cargarTodo);
