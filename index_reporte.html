@@ -98,6 +98,8 @@
   }
   .entidad-head:hover{ background: var(--panel-2); border-radius: 6px; }
   .entidad-id{ font-family: var(--mono); font-size: 13px; }
+  .entidad-nombre{ font-size: 13px; font-weight: 500; display:block; }
+  .entidad-sub{ font-family: var(--mono); font-size: 10.5px; color: var(--muted); display:block; margin-top: 2px; }
   .entidad-count{
     font-family: var(--mono); font-size: 11px; color: var(--muted);
     background: var(--panel-2); border: 1px solid var(--border);
@@ -281,7 +283,10 @@ function pintarEntidades(entidades){
   $entidades.innerHTML = entidades.map((e, idx) => `
     <div class="entidad">
       <div class="entidad-head" data-idx="${idx}">
-        <span class="entidad-id">${e.identidad}</span>
+        <span>
+          <span class="entidad-nombre">${escapeHtml(e.nombre)}</span>
+          <span class="entidad-sub">${e.ruc ? 'RUC ' + e.ruc : 'ID ' + e.identidad}</span>
+        </span>
         <span class="entidad-count">${e.cantidad_conversaciones}</span>
       </div>
       <div class="conv-list" id="conv-list-${idx}">
