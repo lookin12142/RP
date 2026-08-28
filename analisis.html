@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Análisis de calidad · Reporte Inteligente</title>
+<style>
+  :root{
+    --bg: #10131a;
+    --panel: #171b24;
+    --panel-2: #1d2230;
+    --border: #262c3a;
+    --text: #e7e9ee;
+    --muted: #8991a3;
+    --accent: #5b8def;
+    --accent-soft: rgba(91,141,239,0.12);
+    --warn: #f2b84b;
+    --danger: #f25a5a;
+    --assistant: #34d399;
+    --mono: 'IBM Plex Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+    --sans: 'Inter', 'IBM Plex Sans', -apple-system, sans-serif;
+  }
+  *{ box-sizing: border-box; }
+  html,body{
+    margin:0; padding:0; background:var(--bg); color:var(--text);
+    font-family: var(--sans); -webkit-font-smoothing: antialiased;
+  }
+  a{ color: inherit; }
+
+  .wrap{ max-width: 1180px; margin: 0 auto; padding: 28px 24px 80px; }
+
+  header.top{
+    display:flex; align-items:baseline; justify-content: space-between;
+    gap: 16px; margin-bottom: 12px; flex-wrap: wrap;
+  }
+  .eyebrow{
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 4px;
+  }
+  h1{ font-size: 22px; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+  .sub{ color: var(--muted); font-size: 13px; margin-top: 4px; }
+
+  .top-acciones{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+
+  button.refresh{
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.03em;
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    padding: 10px 16px; border-radius: 8px; cursor: pointer;
+    display:flex; align-items:center; gap:8px; transition: border-color .15s, background .15s;
+  }
+  button.refresh:hover{ border-color: var(--accent); background: var(--accent-soft); }
+  button.refresh:focus-visible{ outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.refresh .dot{
+    width:6px; height:6px; border-radius:50%; background: var(--assistant);
+    box-shadow: 0 0 0 0 rgba(52,211,153,0.5);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse{
+    0%{ box-shadow: 0 0 0 0 rgba(52,211,153,0.45); }
+    70%{ box-shadow: 0 0 0 6px rgba(52,211,153,0); }
+    100%{ box-shadow: 0 0 0 0 rgba(52,211,153,0); }
+  }
+  @media (prefers-reduced-motion: reduce){
+    button.refresh .dot{ animation: none; }
+  }
+
+  /* Volver al dashboard de conversaciones. Son dos reportes distintos con
+     públicos distintos, por eso viven en páginas separadas y no en pestañas.
+     Mismo tratamiento visual que el botón de ida, para que se reconozca. */
+  a.nav-volver{
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.03em;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 16px; text-decoration: none;
+    display:flex; align-items:center; gap:8px;
+    transition: border-color .15s, background .15s;
+  }
+  a.nav-volver:hover{ border-color: var(--accent); background: var(--accent-soft); }
+  a.nav-volver:focus-visible{ outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  section.panel{
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px; margin-bottom: 20px;
+  }
+  .panel h2{
+    font-size: 13px; font-family: var(--mono); text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--muted); margin: 0 0 16px; font-weight: 500;
+  }
+  .panel-head{
+    display:flex; align-items:center; justify-content: space-between;
+    flex-wrap: wrap; gap: 10px; margin-bottom: 16px;
+  }
+  .panel-head h2{ margin: 0; }
+
+  select.run-select{
+    font-family: var(--mono); font-size: 12px; background: var(--panel-2);
+    color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 10px; cursor: pointer; max-width: 100%;
+  }
+
+  .empty-hint{
+    color: var(--muted); font-size: 13px; padding: 40px 10px; text-align:center;
+    font-family: var(--mono);
+  }
+
+  .badge{
+    font-family: var(--mono); font-size: 10.5px; padding: 2px 8px; border-radius: 999px;
+    display:inline-block; white-space: nowrap;
+  }
+  .badge.grave{ background: rgba(242,90,90,0.14); color: var(--danger); border: 1px solid rgba(242,90,90,0.4); }
+  .badge.menor{ background: rgba(242,184,75,0.14); color: var(--warn); border: 1px solid rgba(242,184,75,0.4); }
+  .badge.ok{ background: rgba(52,211,153,0.14); color: var(--assistant); border: 1px solid rgba(52,211,153,0.4); }
+  .badge.pendiente{ background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); }
+
+  /* ---- resumen ---- */
+  .resumen-stats{
+    display:flex; gap:28px; flex-wrap:wrap;
+  }
+  .stat b{ font-family: var(--mono); font-size:26px; display:block; line-height:1.15; }
+  .stat span{
+    font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em;
+  }
+  .stat.grave b{ color: var(--danger); }
+  .stat.menor b{ color: var(--warn); }
+  .stat.ok b{ color: var(--assistant); }
+  .stat.pendiente b{ color: var(--muted); }
+
+  /* Desgloses secundarios: no son severidad, son el "por qué" detrás de ella. */
+  .resumen-detalle{
+    display:flex; gap:24px; flex-wrap:wrap; margin-top:18px; padding-top:16px;
+    border-top: 1px solid var(--border);
+  }
+  .detalle-item{ font-size:12px; color: var(--muted); font-family: var(--mono); }
+  .detalle-item b{ color: var(--text); font-size:14px; }
+
+  /* ---- filtros ---- */
+  .filtros{ display:flex; gap:8px; margin-bottom:18px; flex-wrap:wrap; }
+  .filtro{
+    font-family: var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:.04em;
+    padding:5px 12px; border-radius:999px; border:1px solid var(--border); background: var(--panel-2);
+    color: var(--muted); cursor:pointer; user-select:none; transition: border-color .15s, color .15s;
+  }
+  .filtro:hover{ color: var(--text); }
+  .filtro.activo{ border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
+  .filtro .cuenta{ opacity:.6; margin-left:4px; }
+
+  /* ---- cards ---- */
+  .card{
+    background: var(--panel-2); border: 1px solid var(--border); border-radius:10px;
+    padding: 16px; margin-bottom: 14px;
+  }
+  .card.grave{ border-left: 3px solid var(--danger); }
+  .card.menor{ border-left: 3px solid var(--warn); }
+  .card.ok{ border-left: 3px solid var(--assistant); }
+  .card.pendiente{ border-left: 3px solid var(--border); }
+
+  .card-head{
+    display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:8px;
+  }
+  .card-id{ font-family: var(--mono); font-size:11px; color: var(--muted); }
+  .card-pregunta{ font-size:14px; font-weight:500; margin-top:3px; }
+
+  .card-meta{ display:flex; gap:10px; flex-wrap:wrap; margin-top:8px; }
+  .chip{
+    font-family: var(--mono); font-size:10px; color: var(--muted);
+    border:1px solid var(--border); border-radius:4px; padding:2px 7px;
+  }
+
+  .card-body{ display:grid; grid-template-columns: 280px 1fr; gap:18px; margin-top:14px; }
+  @media (max-width: 760px){ .card-body{ grid-template-columns: 1fr; } }
+
+  .card-img{
+    width:100%; border-radius:6px; border:1px solid var(--border); cursor:zoom-in; display:block;
+    background: #fff;
+  }
+  .card-img-empty{
+    font-family: var(--mono); font-size:11px; color: var(--muted); padding:24px 16px;
+    text-align:center; border:1px dashed var(--border); border-radius:6px;
+  }
+
+  .veredicto p{ margin:0 0 8px; font-size:13px; line-height:1.55; }
+  .lista{ margin:6px 0 0; padding-left:18px; font-size:12.5px; line-height:1.6; color: var(--text); }
+  .lista.problemas{ color: var(--danger); }
+  .subhead{
+    font-family: var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.05em;
+    color: var(--muted); margin: 12px 0 2px;
+  }
+
+  /* Visor de imagen a pantalla completa: las capturas son altas y en 280px
+     no se lee nada. Abrir en pestaña nueva perdía el contexto de la corrida. */
+  .lightbox{
+    position: fixed; inset: 0; background: rgba(8,10,14,0.92); z-index: 50;
+    display: none; align-items: center; justify-content: center; padding: 32px;
+  }
+  .lightbox.abierto{ display: flex; }
+  .lightbox img{ max-width: 100%; max-height: 100%; border-radius: 8px; }
+  .lightbox-cerrar{
+    position: absolute; top: 18px; right: 22px; font-family: var(--mono);
+    font-size: 12px; color: var(--muted); background: var(--panel-2);
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 13px; cursor: pointer;
+  }
+  .lightbox-cerrar:hover{ color: var(--text); border-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="top">
+    <div>
+      <p class="eyebrow">Smarty · Batería de preguntas</p>
+      <h1>Análisis de calidad</h1>
+      <p class="sub">Veredicto de la IA sobre cada respuesta del agente</p>
+    </div>
+    <div class="top-acciones">
+      <a class="nav-volver" href="index_reporte.html">← Conversaciones</a>
+      <select class="run-select" id="selectRun">
+        <option value="">Cargando corridas...</option>
+      </select>
+      <button class="refresh" id="btnRefresh">
+        <span class="dot"></span> Actualizar
+      </button>
+    </div>
+  </header>
+
+  <section class="panel">
+    <h2>Resumen de la corrida</h2>
+    <div id="resumen">
+      <div class="empty-hint">Elegí una corrida.</div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Preguntas analizadas</h2>
+      <span class="badge pendiente" id="contadorVisible"></span>
+    </div>
+    <div id="filtros"></div>
+    <div id="preguntas">
+      <div class="empty-hint">Elegí una corrida para ver el análisis.</div>
+    </div>
+  </section>
+
+</div>
+
+<div class="lightbox" id="lightbox">
+  <button class="lightbox-cerrar" id="lightboxCerrar">Cerrar (Esc)</button>
+  <img id="lightboxImg" src="" alt="" />
+</div>
+
+<script>
+// ---- URLs de los webhooks de n8n ----
+const API = {
+  runs:     'https://n8n.smartclic.pe/webhook/reporte-inteligente-runs',
+  analisis: 'https://n8n.smartclic.pe/webhook/reporte-inteligente-analisis'
+};
+
+const SEVERIDADES = ['todas', 'grave', 'menor', 'ok', 'pendiente'];
+
+let filtroActivo = 'todas';
+let datosActuales = null;
+
+const $selectRun = document.getElementById('selectRun');
+const $btnRefresh = document.getElementById('btnRefresh');
+const $resumen = document.getElementById('resumen');
+const $filtros = document.getElementById('filtros');
+const $preguntas = document.getElementById('preguntas');
+const $contadorVisible = document.getElementById('contadorVisible');
+
+function escapeHtml(str){
+  const div = document.createElement('div');
+  div.textContent = str ?? '';
+  return div.innerHTML;
+}
+
+function formatNumero(n){
+  const num = Number(n);
+  return isNaN(num) ? String(n ?? '-') : num.toLocaleString('es-PE');
+}
+
+/** Etiqueta legible para el <option>. El run_id ya es una fecha ISO. */
+function etiquetaRun(run){
+  const fecha = run.iniciado_en || run.run_id;
+  const d = new Date(fecha);
+  const cuando = isNaN(d.getTime())
+    ? run.run_id
+    : d.toLocaleString('es-PE', { dateStyle: 'medium', timeStyle: 'short' });
+  const entorno = run.entorno ? run.entorno + ' · ' : '';
+  const total = run.preguntas_guardadas != null ? ' (' + run.preguntas_guardadas + ')' : '';
+  return entorno + cuando + total;
+}
+
+async function cargarRuns(){
+  $selectRun.innerHTML = '<option value="">Cargando corridas...</option>';
+  try{
+    const res = await fetch(API.runs);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const runs = Array.isArray(data) ? data : (data.runs || []);
+
+    if (!runs.length){
+      $selectRun.innerHTML = '<option value="">Sin corridas registradas</option>';
+      $preguntas.innerHTML = '<div class="empty-hint">No hay corridas para mostrar.</div>';
+      return;
+    }
+
+    $selectRun.innerHTML = runs
+      .map(r => '<option value="' + escapeHtml(r.run_id) + '">' + escapeHtml(etiquetaRun(r)) + '</option>')
+      .join('');
+
+    cargarAnalisis(runs[0].run_id);
+  }catch(err){
+    $selectRun.innerHTML = '<option value="">Error al cargar corridas</option>';
+    $preguntas.innerHTML = '<div class="empty-hint">No se pudo cargar la lista de corridas (' + escapeHtml(err.message) + ')</div>';
+  }
+}
+
+async function cargarAnalisis(runId){
+  if (!runId) return;
+
+  $resumen.innerHTML = '<div class="empty-hint">Cargando...</div>';
+  $filtros.innerHTML = '';
+  $preguntas.innerHTML = '<div class="empty-hint">Cargando análisis...</div>';
+  $contadorVisible.textContent = '';
+
+  try{
+    const res = await fetch(API.analisis + '?run_id=' + encodeURIComponent(runId));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    datosActuales = Array.isArray(data) ? data[0] : data;
+    filtroActivo = 'todas';
+    pintarTodo();
+  }catch(err){
+    $resumen.innerHTML = '<div class="empty-hint">Sin resumen.</div>';
+    $preguntas.innerHTML = '<div class="empty-hint">No se pudo cargar el análisis (' + escapeHtml(err.message) + ')</div>';
+  }
+}
+
+function pintarTodo(){
+  if (!datosActuales) return;
+  pintarResumen(datosActuales.resumen || {}, datosActuales.preguntas || []);
+  pintarFiltros(datosActuales.preguntas || []);
+  pintarPreguntas(datosActuales.preguntas || []);
+}
+
+function pintarResumen(r, preguntas){
+  const stat = (clase, valor, etiqueta) =>
+    '<div class="stat ' + clase + '"><b>' + formatNumero(valor ?? 0) + '</b><span>' + etiqueta + '</span></div>';
+
+  const detalle = (valor, etiqueta) =>
+    '<div class="detalle-item"><b>' + formatNumero(valor ?? 0) + '</b> ' + etiqueta + '</div>';
+
+  $resumen.innerHTML =
+    '<div class="resumen-stats">' +
+      stat('', r.total_preguntas ?? preguntas.length, 'Preguntas') +
+      stat('grave', r.graves, 'Graves') +
+      stat('menor', r.menores, 'Menores') +
+      stat('ok', r.ok, 'Ok') +
+      stat('pendiente', r.pendientes, 'Sin analizar') +
+    '</div>' +
+    '<div class="resumen-detalle">' +
+      detalle(r.no_responde, 'no responden la pregunta') +
+      detalle(r.datos_invalidos, 'con datos inválidos') +
+      detalle(r.grafico_no_apropiado, 'con gráfico no apropiado') +
+    '</div>';
+}
+
+function pintarFiltros(preguntas){
+  const cuenta = (sev) => sev === 'todas'
+    ? preguntas.length
+    : preguntas.filter(p => (p.severidad || 'pendiente') === sev).length;
+
+  $filtros.innerHTML = '<div class="filtros">' +
+    SEVERIDADES.map(f =>
+      '<span class="filtro ' + (f === filtroActivo ? 'activo' : '') + '" data-filtro="' + f + '">' +
+        (f === 'todas' ? 'Todas' : f) +
+        '<span class="cuenta">' + cuenta(f) + '</span>' +
+      '</span>'
+    ).join('') +
+  '</div>';
+
+  $filtros.querySelectorAll('.filtro').forEach(el => {
+    el.addEventListener('click', () => {
+      filtroActivo = el.dataset.filtro;
+      pintarTodo();
+    });
+  });
+}
+
+function pintarPreguntas(preguntas){
+  const filtradas = filtroActivo === 'todas'
+    ? preguntas
+    : preguntas.filter(p => (p.severidad || 'pendiente') === filtroActivo);
+
+  $contadorVisible.textContent = filtradas.length + ' de ' + preguntas.length;
+
+  if (!filtradas.length){
+    $preguntas.innerHTML = '<div class="empty-hint">Sin preguntas para este filtro.</div>';
+    return;
+  }
+
+  $preguntas.innerHTML = filtradas.map(pintarCard).join('');
+
+  $preguntas.querySelectorAll('.card-img').forEach(img => {
+    img.addEventListener('click', () => abrirLightbox(img.src, img.alt));
+  });
+}
+
+function pintarCard(p){
+  const sev = p.severidad || 'pendiente';
+  const hallazgos = Array.isArray(p.hallazgos) ? p.hallazgos : [];
+  const problemas = Array.isArray(p.problemas_visuales) ? p.problemas_visuales : [];
+
+  const imagenHtml = p.captura_url
+    ? '<img class="card-img" src="' + escapeHtml(p.captura_url) + '" alt="Captura de ' + escapeHtml(p.question_id) + '" loading="lazy" />'
+    : '<div class="card-img-empty">Sin captura<br />(' + escapeHtml(p.tipo_grafico || 'sin_grafico') + ')</div>';
+
+  const chips = [
+    p.tipo_grafico || 'sin_grafico',
+    p.responde_pregunta ? 'responde: ' + p.responde_pregunta : null,
+    p.calidad_datos ? 'datos: ' + p.calidad_datos : null,
+    p.grafico_apropiado ? 'gráfico: ' + p.grafico_apropiado : null,
+    p.duracion_ms != null ? formatNumero(p.duracion_ms) + ' ms' : null
+  ].filter(Boolean);
+
+  const listaHtml = (titulo, items, clase) => items.length
+    ? '<p class="subhead">' + titulo + '</p><ul class="lista ' + clase + '">' +
+      items.map(h => '<li>' + escapeHtml(h) + '</li>').join('') + '</ul>'
+    : '';
+
+  return '' +
+    '<div class="card ' + sev + '">' +
+      '<div class="card-head">' +
+        '<div>' +
+          '<span class="card-id">' + escapeHtml(p.question_id) + ' · ' + escapeHtml(p.categoria || '-') + '</span>' +
+          '<div class="card-pregunta">' + escapeHtml(p.pregunta) + '</div>' +
+          '<div class="card-meta">' +
+            chips.map(c => '<span class="chip">' + escapeHtml(c) + '</span>').join('') +
+          '</div>' +
+        '</div>' +
+        '<span class="badge ' + sev + '">' + escapeHtml(sev) + '</span>' +
+      '</div>' +
+      '<div class="card-body">' +
+        imagenHtml +
+        '<div class="veredicto">' +
+          '<p>' + escapeHtml(p.veredicto_resumen || 'Sin veredicto todavía.') + '</p>' +
+          (p.respuesta_texto
+            ? '<p class="subhead">Respuesta del agente</p><p>' + escapeHtml(p.respuesta_texto) + '</p>'
+            : '') +
+          listaHtml('Hallazgos', hallazgos, '') +
+          listaHtml('Problemas visuales', problemas, 'problemas') +
+        '</div>' +
+      '</div>' +
+    '</div>';
+}
+
+// ---- lightbox ----
+const $lightbox = document.getElementById('lightbox');
+const $lightboxImg = document.getElementById('lightboxImg');
+
+function abrirLightbox(src, alt){
+  $lightboxImg.src = src;
+  $lightboxImg.alt = alt || '';
+  $lightbox.classList.add('abierto');
+}
+
+function cerrarLightbox(){
+  $lightbox.classList.remove('abierto');
+  $lightboxImg.src = '';
+}
+
+document.getElementById('lightboxCerrar').addEventListener('click', cerrarLightbox);
+$lightbox.addEventListener('click', (ev) => {
+  if (ev.target === $lightbox) cerrarLightbox();
+});
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') cerrarLightbox();
+});
+
+// ---- arranque ----
+$selectRun.addEventListener('change', (ev) => cargarAnalisis(ev.target.value));
+$btnRefresh.addEventListener('click', () => {
+  const actual = $selectRun.value;
+  if (actual) cargarAnalisis(actual); else cargarRuns();
+});
+window.addEventListener('DOMContentLoaded', cargarRuns);
+</script>
+
+</body>
+</html>

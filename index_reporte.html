@@ -182,6 +182,38 @@
   }
   .grafico-tabla-detalle summary::marker{ color: var(--accent); }
   .grafico-tabla{ margin-top:8px; }
+  .grafico-tabla-wrap{ overflow-x:auto; }
+  .grafico-cell-empty{ color: var(--muted); }
+
+  /* ---- gráfico circular (donut vía conic-gradient) ---- */
+  .grafico-donut-wrap{ display:flex; align-items:center; gap:20px; flex-wrap:wrap; }
+  .grafico-donut{
+    width:120px; height:120px; border-radius:50%; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .grafico-donut-hole{
+    width:72px; height:72px; border-radius:50%; background: var(--panel);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+  }
+  .grafico-donut-total{ font-family: var(--mono); font-size:14px; font-weight:600; color: var(--text); }
+  .grafico-donut-total-label{ font-size:9px; color: var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+  .grafico-legend-col{ flex-direction:column; align-items:flex-start; gap:6px; }
+  .grafico-donut-value{ font-family: var(--mono); font-size:11px; color: var(--muted); margin-left:4px; }
+
+  /* ---- gráfico multilineal (SVG) ---- */
+  .grafico-linea-svg{ width:100%; height:220px; display:block; }
+
+  /* ---- payload roto: hacer visible que el problema son los datos ---- */
+  .grafico-invalido{
+    background: rgba(242,90,90,0.08); border: 1px solid rgba(242,90,90,0.35);
+    border-radius: 8px; padding: 12px 14px; font-size: 12.5px; line-height:1.5;
+    color: var(--text);
+  }
+  .grafico-invalido-tag{
+    display:inline-block; font-family: var(--mono); font-size:10px;
+    text-transform:uppercase; letter-spacing:.04em; color:#f25a5a;
+    margin-bottom:6px;
+  }
 
   .empty-hint{
     color: var(--muted); font-size: 13px; padding: 40px 10px; text-align:center;
@@ -262,6 +294,21 @@
   .badge.no{ background: rgba(242,90,90,0.12); color: #f25a5a; border: 1px solid rgba(242,90,90,0.35); }
   .badge.parcial{ background: rgba(242,184,75,0.12); color: var(--warn); border: 1px solid rgba(242,184,75,0.35); }
   .badge.no_aplica{ background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); }
+
+  /* El análisis de calidad de la batería vive en analisis.html — es otro
+     reporte, con otro público y otro ciclo de vida. Se navega con un botón
+     propio y no con un link en el subtítulo: ahí abajo no se veía. */
+  .top-acciones{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  a.nav-analisis{
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.03em;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 16px; text-decoration: none;
+    display:flex; align-items:center; gap:8px;
+    transition: border-color .15s, background .15s;
+  }
+  a.nav-analisis:hover{ border-color: var(--accent); background: var(--accent-soft); }
+  a.nav-analisis:focus-visible{ outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>
 </head>
 <body>
@@ -274,9 +321,12 @@
       <h1>Reporte de conversaciones</h1>
       <p class="sub">Últimos 30 días · agente 2</p>
     </div>
-    <button class="refresh" id="btnRefresh">
-      <span class="dot"></span> Actualizar
-    </button>
+    <div class="top-acciones">
+      <a class="nav-analisis" href="analisis.html">Análisis de calidad →</a>
+      <button class="refresh" id="btnRefresh">
+        <span class="dot"></span> Actualizar
+      </button>
+    </div>
   </header>
 
   <section class="panel">
@@ -476,6 +526,7 @@ function pintarTranscripcion(data){
   const bubbles = mensajes.map(m => {
     const isUser = (m.sender || '').toLowerCase() === 'user';
     const grafico = !isUser ? parseGrafico(m.text) : null;
+    const infoMsg = (!isUser && !grafico) ? extraerMensajeInfo(m.text) : null;
 
     if (grafico){
       return `
@@ -490,7 +541,7 @@ function pintarTranscripcion(data){
     return `
       <div class="bubble ${isUser ? 'user' : 'assistant'}">
         <span class="sender-label">${isUser ? 'Usuario' : 'Asistente'}</span>
-        ${escapeHtml(m.text || '')}
+        ${escapeHtml(infoMsg !== null ? infoMsg : (m.text || ''))}
         <span class="ts">${fmtDateTime(m.created_at)}</span>
       </div>
     `;
@@ -517,41 +568,319 @@ function formatNumero(n){
 }
 
 // El backend manda el gráfico como JSON serializado dentro de m.text (mensajes del asistente).
+// Antes solo se reconocía si traía "items" (forma de grafico_barras) — el resto
+// (tabla, circular, multilineal, sin_grafico) caía al bubble de texto plano y se
+// veía el JSON crudo. Ahora se reconoce por tipo_grafico, sin importar qué campo
+// de datos traiga cada forma.
+const TIPOS_GRAFICO_CONOCIDOS = new Set([
+  'grafico_barras', 'grafico_circular', 'grafico_multilineal', 'grafico_lineal', 'tabla', 'sin_grafico'
+]);
+
 function parseGrafico(text){
+  if (!text || typeof text !== 'string') return null;
+  const t = text.trim();
+  if (!t.startsWith('{')) return null;
+  let obj;
+  try{ obj = JSON.parse(t); }catch(e){ return null; }
+  if (!obj || typeof obj !== 'object') return null;
+
+  // El agente no es consistente en dónde pone el tipo: los gráficos usan
+  // "tipo_grafico", pero las respuestas sin_grafico llegan con "tipo".
+  // Se aceptan ambos y se normaliza a tipo_grafico para el resto del render.
+  // OJO: "tipo":"info" NO entra acá — esas son repreguntas y las maneja
+  // extraerMensajeInfo(), porque no son un gráfico sino texto para el usuario.
+  const tipo = obj.tipo_grafico || obj.tipo;
+  if (!TIPOS_GRAFICO_CONOCIDOS.has(tipo)) return null;
+
+  return Object.assign({}, obj, { tipo_grafico: tipo });
+}
+
+// El identificador de intención responde con {"tipo":"info", "mensaje": "..."}
+// cuando repregunta o rechaza una consulta. Mismo problema que arriba: sin esto
+// se ve el JSON crudo en vez del texto de la repregunta.
+function extraerMensajeInfo(text){
   if (!text || typeof text !== 'string') return null;
   const t = text.trim();
   if (!t.startsWith('{')) return null;
   try{
     const obj = JSON.parse(t);
-    if (obj && obj.tipo_grafico && Array.isArray(obj.items)) return obj;
-  }catch(e){ /* no era JSON de gráfico, se muestra como texto normal */ }
+    if (obj && obj.tipo === 'info') return obj.mensaje || obj.message || obj.comentarios || '';
+  }catch(e){ /* no era JSON de info, se muestra como texto normal */ }
   return null;
 }
 
 function renderGrafico(g){
-  const items = Array.isArray(g.items) ? g.items : [];
-  const series = (Array.isArray(g.series) && g.series.length)
-    ? g.series
-    : [{ name: g.legendY || 'Valor', color: '#5b8def' }];
   const tipo = (g.tipo_grafico || '').toLowerCase();
-
+  const esSinGrafico = tipo === 'sin_grafico';
   let cuerpo;
-  if (!items.length){
-    cuerpo = '<div class="grafico-empty">Sin datos para graficar.</div>';
+
+  if (esSinGrafico){
+    cuerpo = `<div class="grafico-empty">${escapeHtml(g.mensaje || g.comentarios || 'Sin datos para mostrar.')}</div>`;
+
+  } else if (tipo === 'tabla'){
+    const filas = Array.isArray(g.tableData) ? g.tableData : [];
+    cuerpo = renderTablaDinamica(filas);
+
   } else if (tipo === 'grafico_barras'){
-    cuerpo = renderBarrasHorizontales(items, series, g.legendY);
+    const items = Array.isArray(g.items) ? g.items : [];
+    if (!items.length){
+      cuerpo = '<div class="grafico-empty">Sin datos para graficar.</div>';
+    } else {
+      const series = (Array.isArray(g.series) && g.series.length)
+        ? g.series
+        : [{ name: g.legendY || 'Valor', color: '#5b8def' }];
+      cuerpo = renderBarrasHorizontales(items, series, g.legendY) + renderTablaGrafico(items, series, g.legendY);
+    }
+
+  } else if (tipo === 'grafico_circular'){
+    // El campo con los datos varía según quién lo genera: unos mandan
+    // "datos_sql", otros "data" — se prueban los dos.
+    const crudos = Array.isArray(g.datos_sql) ? g.datos_sql : (Array.isArray(g.data) ? g.data : []);
+    cuerpo = renderCircular(crudos, g.visiblePercentages !== false);
+
+  } else if (tipo === 'grafico_multilineal' || tipo === 'grafico_lineal'){
+    // grafico_lineal y grafico_multilineal comparten estructura: el microfront
+    // los trata igual (ambos van a transformMultilineal / cmp-ogive). La única
+    // diferencia real es cuántas series trae `data`.
+    const series = Array.isArray(g.data) ? g.data : [];
+    const problema = diagnosticarSerieTemporal(series, g.labelNames || []);
+
+    if (problema){
+      cuerpo = renderDatosInvalidos(problema);
+    } else {
+      cuerpo = renderMultilineal(series, g.labelNames || [], g.legendAxisX, g.legendAxisY)
+        + wrapDetalle(renderTablaMultilineal(series, g.labelNames || []));
+    }
+
   } else {
-    cuerpo = `<div class="grafico-empty">Tipo de gráfico "${escapeHtml(g.tipo_grafico || '?')}" aún sin visualización — datos en la tabla.</div>`;
+    cuerpo = `<div class="grafico-empty">Tipo de gráfico "${escapeHtml(g.tipo_grafico || '?')}" aún sin visualización.</div>`;
   }
 
   return `
     <div class="grafico-card">
       ${g.titulo ? `<div class="grafico-title">${escapeHtml(g.titulo)}</div>` : ''}
       ${cuerpo}
-      ${items.length ? renderTablaGrafico(items, series, g.legendY) : ''}
-      ${g.comentarios ? `<div class="grafico-comment">${escapeHtml(g.comentarios)}</div>` : ''}
+      ${(!esSinGrafico && g.comentarios) ? `<div class="grafico-comment">${escapeHtml(g.comentarios)}</div>` : ''}
     </div>
   `;
+}
+
+function wrapDetalle(tablaHtml){
+  return `
+    <details class="grafico-tabla-detalle">
+      <summary>Ver tabla de datos</summary>
+      ${tablaHtml}
+    </details>
+  `;
+}
+
+// Paleta compartida por circular y multilineal. Mismo azul de acento primero,
+// completada para N series.
+const PALETA = ['#5b8def', '#34d399', '#f2b84b', '#f25a5a', '#a78bfa', '#22d3ee', '#fb7185', '#84cc16'];
+
+function normalizarColor(c){
+  if (!c) return null;
+  const s = String(c).trim();
+  if (!s) return null;
+  // Algunos agentes mandan el color sin "#" (ej: "4CAF50" en vez de "#4CAF50").
+  return s.startsWith('#') ? s : ('#' + s);
+}
+
+function renderCircular(crudos, mostrarPorcentajes){
+  const items = (crudos || [])
+    .map((d, i) => ({
+      label: String(d.label ?? d.nombre ?? ('Ítem ' + (i + 1))),
+      value: Number(d.value ?? d.amount ?? 0) || 0,
+      color: normalizarColor(d.color) || PALETA[i % PALETA.length],
+    }))
+    .filter(d => d.value > 0);
+
+  if (!items.length) return '<div class="grafico-empty">Sin datos para el gráfico circular.</div>';
+
+  const total = items.reduce((acc, d) => acc + d.value, 0) || 1;
+  let acumulado = 0;
+  const segmentos = items.map(d => {
+    const desde = (acumulado / total) * 100;
+    acumulado += d.value;
+    return `${d.color} ${desde}% ${(acumulado / total) * 100}%`;
+  }).join(', ');
+
+  const leyenda = items.map(d => {
+    const pct = ((d.value / total) * 100).toFixed(1);
+    return `
+      <span class="grafico-legend-item">
+        <i style="background:${d.color}"></i>${escapeHtml(d.label)}
+        <span class="grafico-donut-value">${mostrarPorcentajes ? pct + '% · ' : ''}${formatNumero(d.value)}</span>
+      </span>
+    `;
+  }).join('');
+
+  return `
+    <div class="grafico-donut-wrap">
+      <div class="grafico-donut" style="background: conic-gradient(${segmentos});">
+        <div class="grafico-donut-hole">
+          <span class="grafico-donut-total">${formatNumero(total)}</span>
+          <span class="grafico-donut-total-label">Total</span>
+        </div>
+      </div>
+      <div class="grafico-legend grafico-legend-col">${leyenda}</div>
+    </div>
+    ${wrapDetalle(renderTablaDinamica(items.map(d => ({ Categoría: d.label, Valor: d.value }))))}
+  `;
+}
+
+function fmtDateShort(iso){
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleDateString('es-PE', { day:'2-digit', month:'short' });
+}
+
+/**
+ * Detecta series temporales que llegaron rotas desde el backend.
+ *
+ * El caso real que motivó esto: el Code node de n8n arma las fechas con
+ * String(fila[COL_FECHA]); si el nombre de columna no coincide con el que
+ * devuelve el SQL, queda el texto literal "undefined" como fecha. Sin este
+ * chequeo el gráfico se dibuja igual, con un punto llamado "undefined" en 0,
+ * y parece un problema de visualización cuando en realidad es de datos.
+ *
+ * Devuelve null si la serie está sana, o un texto explicando qué está mal.
+ */
+function diagnosticarSerieTemporal(series, labelNames){
+  if (!series.length) return 'El agente no devolvió ninguna serie de datos.';
+
+  const puntos = series.flatMap(s => Array.isArray(s.frequencies) ? s.frequencies : []);
+  if (!puntos.length) return 'Las series vinieron sin puntos de datos (frequencies vacío).';
+
+  const fechaValida = (v) => v !== null && v !== undefined
+    && String(v).trim() !== ''
+    && String(v).toLowerCase() !== 'undefined'
+    && String(v).toLowerCase() !== 'null'
+    && !isNaN(new Date(v));
+
+  if (!puntos.some(p => fechaValida(p.date))){
+    const muestra = JSON.stringify(puntos[0] && puntos[0].date);
+    return 'Ninguna fecha de la serie es válida (ejemplo recibido: ' + muestra + '). '
+      + 'El backend está armando las fechas desde una columna que no existe en el resultado del SQL.';
+  }
+
+  // Aviso menor: no invalida el gráfico, pero delata que el backend prometió
+  // más series de las que armó.
+  if (labelNames.length > series.length){
+    return null;
+  }
+  return null;
+}
+
+function renderDatosInvalidos(detalle){
+  return `
+    <div class="grafico-invalido">
+      <span class="grafico-invalido-tag">Datos inválidos</span>
+      <div>${escapeHtml(detalle)}</div>
+    </div>
+  `;
+}
+
+function renderMultilineal(series, labelNames, legendAxisX, legendAxisY){
+  const master = ((series[0] && series[0].frequencies) || []).map(f => f.date);
+  const n = master.length;
+  if (!n) return '<div class="grafico-empty">Sin datos para la tendencia.</div>';
+
+  const W = 900, H = 220, padL = 54, padR = 16, padT = 14, padB = 26;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+
+  const valores = series.flatMap(s => (s.frequencies || []).map(f => Number(f.amount) || 0));
+  const maxVal = Math.max(0, ...valores);
+  const minVal = Math.min(0, ...valores);
+  const rango = (maxVal - minVal) || 1;
+
+  const xFor = (i) => padL + (n <= 1 ? innerW / 2 : (i / (n - 1)) * innerW);
+  const yFor = (v) => padT + innerH - ((v - minVal) / rango) * innerH;
+
+  let paths = '', puntos = '', leyenda = '';
+
+  series.forEach((s, si) => {
+    const color = PALETA[si % PALETA.length];
+    const freqs = s.frequencies || [];
+    const linea = freqs.map((f, i) => `${xFor(i)},${yFor(Number(f.amount) || 0)}`).join(' ');
+    paths += `<polyline points="${linea}" fill="none" stroke="${color}" stroke-width="2" />`;
+    puntos += freqs.map((f, i) =>
+      `<circle cx="${xFor(i)}" cy="${yFor(Number(f.amount) || 0)}" r="2.5" fill="${color}"><title>${escapeHtml(f.date)}: ${formatNumero(f.amount)}</title></circle>`
+    ).join('');
+    if (series.length > 1){
+      leyenda += `<span class="grafico-legend-item"><i style="background:${color}"></i>${escapeHtml(labelNames[si] || ('Serie ' + (si + 1)))}</span>`;
+    }
+  });
+
+  let lineaCero = '';
+  if (minVal < 0 && maxVal > 0){
+    const y0 = yFor(0);
+    lineaCero = `<line x1="${padL}" y1="${y0}" x2="${W - padR}" y2="${y0}" stroke="#8991a3" stroke-width="1" stroke-dasharray="3,3" />`;
+  }
+
+  const step = Math.ceil(n / 8) || 1;
+  let etiquetasX = '';
+  master.forEach((fecha, i) => {
+    if (i % step === 0 || i === n - 1){
+      etiquetasX += `<text x="${xFor(i)}" y="${H - 8}" font-size="9" fill="#8991a3" text-anchor="middle" font-family="monospace">${escapeHtml(fmtDateShort(fecha))}</text>`;
+    }
+  });
+
+  const etiquetasY = `
+    <text x="${padL - 8}" y="${yFor(maxVal) + 3}" font-size="9" fill="#8991a3" text-anchor="end" font-family="monospace">${formatNumero(maxVal)}</text>
+    <text x="${padL - 8}" y="${yFor(minVal) + 3}" font-size="9" fill="#8991a3" text-anchor="end" font-family="monospace">${formatNumero(minVal)}</text>
+  `;
+
+  return `
+    ${leyenda ? `<div class="grafico-legend">${leyenda}</div>` : ''}
+    <svg viewBox="0 0 ${W} ${H}" class="grafico-linea-svg" preserveAspectRatio="none">
+      ${lineaCero}${paths}${puntos}${etiquetasX}${etiquetasY}
+    </svg>
+    ${(legendAxisX || legendAxisY) ? `<div class="grafico-axis-label">${escapeHtml(legendAxisY || '')}${legendAxisX ? ' · ' + escapeHtml(legendAxisX) : ''}</div>` : ''}
+  `;
+}
+
+function renderTablaMultilineal(series, labelNames){
+  const master = ((series[0] && series[0].frequencies) || []).map(f => f.date);
+  const filas = master.map((fecha, i) => {
+    const fila = { Fecha: fecha };
+    series.forEach((s, si) => {
+      fila[labelNames[si] || ('Serie ' + (si + 1))] = (s.frequencies && s.frequencies[i] && s.frequencies[i].amount) || 0;
+    });
+    return fila;
+  });
+  return renderTablaDinamica(filas);
+}
+
+// Tabla genérica: columnas derivadas de las claves del primer objeto. Se usa
+// tanto para tipo_grafico:"tabla" como para el detalle expandible de circular
+// y multilineal.
+function renderTablaDinamica(filas){
+  if (!filas || !filas.length) return '<div class="grafico-empty">Sin datos.</div>';
+  // El payload real a veces trae una clave "" vacía (artefacto del generador) —
+  // se descarta para no pintar una columna en blanco.
+  const columnas = Object.keys(filas[0]).filter(c => c !== '');
+  if (!columnas.length) return '<div class="grafico-empty">Sin columnas para mostrar.</div>';
+
+  const head = columnas.map(c => `<th>${escapeHtml(c)}</th>`).join('');
+  const body = filas.map(fila =>
+    `<tr>${columnas.map(c => `<td>${formatCelda(fila[c])}</td>`).join('')}</tr>`
+  ).join('');
+
+  return `
+    <div class="grafico-tabla-wrap">
+      <table class="conv-table grafico-tabla">
+        <thead><tr>${head}</tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function formatCelda(v){
+  if (v === null || v === undefined || v === '') return '<span class="grafico-cell-empty">—</span>';
+  if (typeof v === 'number') return formatNumero(v);
+  return escapeHtml(String(v));
 }
 
 function renderBarrasHorizontales(items, series, legendY){
@@ -743,6 +1072,8 @@ function pintarReporte(data, contenedorId){
     ` : (tieneIA ? '' : '<div class="empty-hint" style="margin-top:12px;">Este análisis no incluye patrones ni satisfacción por conversación (vista en vivo, sin IA).</div>')}
   `;
 }
+
+// ─── Análisis de calidad — batería de 100 preguntas ────────────────────────
 
 function cargarTodo(){
   cargarVolumen();
