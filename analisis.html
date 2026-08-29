@@ -278,16 +278,26 @@ function formatNumero(n){
   return isNaN(num) ? String(n ?? '-') : num.toLocaleString('es-PE');
 }
 
-/** Etiqueta legible para el <option>. El run_id ya es una fecha ISO. */
+/**
+ * Etiqueta legible para el <option>.
+ *
+ * La empresa va primero cuando existe: en la batería multiempresa (RI-02) se
+ * corren seis corridas casi a la misma hora, y sin el RUC adelante las seis
+ * opciones se leen iguales y no hay forma de saber cuál se está mirando.
+ */
 function etiquetaRun(run){
   const fecha = run.iniciado_en || run.run_id;
   const d = new Date(fecha);
   const cuando = isNaN(d.getTime())
     ? run.run_id
     : d.toLocaleString('es-PE', { dateStyle: 'medium', timeStyle: 'short' });
+
+  const empresa = run.razon_social || run.ruc
+    ? (run.razon_social ? run.razon_social + ' · ' : '') + (run.ruc ? run.ruc + ' · ' : '')
+    : '';
   const entorno = run.entorno ? run.entorno + ' · ' : '';
   const total = run.preguntas_guardadas != null ? ' (' + run.preguntas_guardadas + ')' : '';
-  return entorno + cuando + total;
+  return empresa + entorno + cuando + total;
 }
 
 async function cargarRuns(){
