@@ -134,7 +134,8 @@
   .detalle-item b{ color: var(--text); font-size:14px; }
 
   /* ---- filtros ---- */
-  .filtros{ display:flex; gap:8px; margin-bottom:18px; flex-wrap:wrap; }
+  .filtros{ display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
+  .filtros-grafico{ margin-bottom:18px; }
   .filtro{
     font-family: var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:.04em;
     padding:5px 12px; border-radius:999px; border:1px solid var(--border); background: var(--panel-2);
@@ -165,6 +166,12 @@
     font-family: var(--mono); font-size:10px; color: var(--muted);
     border:1px solid var(--border); border-radius:4px; padding:2px 7px;
   }
+  .chip-ruc{
+    color: var(--accent); border-color: rgba(91,141,239,0.4); cursor: pointer;
+    transition: background .15s;
+  }
+  .chip-ruc:hover{ background: var(--accent-soft); }
+  .chip-ruc.copiado{ color: var(--assistant); border-color: rgba(52,211,153,0.4); }
 
   .card-body{ display:grid; grid-template-columns: 280px 1fr; gap:18px; margin-top:14px; }
   @media (max-width: 760px){ .card-body{ grid-template-columns: 1fr; } }
@@ -258,7 +265,16 @@ const API = {
 const SEVERIDADES = ['todas', 'grave', 'menor', 'ok', 'pendiente'];
 
 let filtroActivo = 'todas';
+let filtroGraficoActivo = 'todos';
 let datosActuales = null;
+
+/**
+ * Tipos que puede traer tipo_grafico, más el "sin gráfico" que en la base
+ * llega como null. Van fijos y no derivados de los datos: si una corrida no
+ * tiene ningún ejemplo de un tipo, igual queremos verlo listado en 0 —
+ * confirma que faltó, no que el filtro está roto.
+ */
+const TIPOS_GRAFICO = ['todos', 'grafico_barras', 'grafico_multilineal', 'grafico_circular', 'tabla', 'sin_grafico'];
 
 const $selectRun = document.getElementById('selectRun');
 const $btnRefresh = document.getElementById('btnRefresh');
@@ -339,6 +355,7 @@ async function cargarAnalisis(runId){
     const data = await res.json();
     datosActuales = Array.isArray(data) ? data[0] : data;
     filtroActivo = 'todas';
+    filtroGraficoActivo = 'todos';
     pintarTodo();
   }catch(err){
     $resumen.innerHTML = '<div class="empty-hint">Sin resumen.</div>';
@@ -375,32 +392,58 @@ function pintarResumen(r, preguntas){
     '</div>';
 }
 
-function pintarFiltros(preguntas){
-  const cuenta = (sev) => sev === 'todas'
-    ? preguntas.length
-    : preguntas.filter(p => (p.severidad || 'pendiente') === sev).length;
+/** true si `p` pasa el filtro de severidad activo. */
+function pasaFiltroSeveridad(p){
+  return filtroActivo === 'todas' || (p.severidad || 'pendiente') === filtroActivo;
+}
 
-  $filtros.innerHTML = '<div class="filtros">' +
-    SEVERIDADES.map(f =>
-      '<span class="filtro ' + (f === filtroActivo ? 'activo' : '') + '" data-filtro="' + f + '">' +
-        (f === 'todas' ? 'Todas' : f) +
-        '<span class="cuenta">' + cuenta(f) + '</span>' +
-      '</span>'
-    ).join('') +
-  '</div>';
+/** true si `p` pasa el filtro de tipo de gráfico activo. */
+function pasaFiltroGrafico(p){
+  return filtroGraficoActivo === 'todos' || (p.tipo_grafico || 'sin_grafico') === filtroGraficoActivo;
+}
+
+function pintarFiltros(preguntas){
+  // Los dos filtros son independientes pero cada conteo se hace sobre lo que
+  // YA pasó el otro eje: la cuenta de "grafico_barras" tiene que reflejar
+  // cuántas quedan visibles si además hay una severidad elegida, no cuántas
+  // hay en total — si no, el número en el chip mentiría sobre lo que vas a ver.
+  const cuentaSeveridad = (sev) => preguntas
+    .filter(p => pasaFiltroGrafico(p))
+    .filter(p => sev === 'todas' || (p.severidad || 'pendiente') === sev).length;
+
+  const cuentaGrafico = (tipo) => preguntas
+    .filter(p => pasaFiltroSeveridad(p))
+    .filter(p => tipo === 'todos' || (p.tipo_grafico || 'sin_grafico') === tipo).length;
+
+  $filtros.innerHTML =
+    '<div class="filtros">' +
+      SEVERIDADES.map(f =>
+        '<span class="filtro ' + (f === filtroActivo ? 'activo' : '') + '" data-eje="severidad" data-filtro="' + f + '">' +
+          (f === 'todas' ? 'Todas' : f) +
+          '<span class="cuenta">' + cuentaSeveridad(f) + '</span>' +
+        '</span>'
+      ).join('') +
+    '</div>' +
+    '<div class="filtros filtros-grafico">' +
+      TIPOS_GRAFICO.map(t =>
+        '<span class="filtro ' + (t === filtroGraficoActivo ? 'activo' : '') + '" data-eje="grafico" data-filtro="' + t + '">' +
+          (t === 'todos' ? 'Todos los gráficos' : t) +
+          '<span class="cuenta">' + cuentaGrafico(t) + '</span>' +
+        '</span>'
+      ).join('') +
+    '</div>';
 
   $filtros.querySelectorAll('.filtro').forEach(el => {
     el.addEventListener('click', () => {
-      filtroActivo = el.dataset.filtro;
+      if (el.dataset.eje === 'severidad') filtroActivo = el.dataset.filtro;
+      else filtroGraficoActivo = el.dataset.filtro;
       pintarTodo();
     });
   });
 }
 
 function pintarPreguntas(preguntas){
-  const filtradas = filtroActivo === 'todas'
-    ? preguntas
-    : preguntas.filter(p => (p.severidad || 'pendiente') === filtroActivo);
+  const filtradas = preguntas.filter(p => pasaFiltroSeveridad(p) && pasaFiltroGrafico(p));
 
   $contadorVisible.textContent = filtradas.length + ' de ' + preguntas.length;
 
@@ -413,6 +456,19 @@ function pintarPreguntas(preguntas){
 
   $preguntas.querySelectorAll('.card-img').forEach(img => {
     img.addEventListener('click', () => abrirLightbox(img.src, img.alt));
+  });
+
+  $preguntas.querySelectorAll('.chip-ruc').forEach(chip => {
+    chip.addEventListener('click', async () => {
+      try{
+        await navigator.clipboard.writeText(chip.dataset.ruc);
+        chip.classList.add('copiado');
+        setTimeout(() => chip.classList.remove('copiado'), 1200);
+      }catch(err){
+        // Sin permiso de portapapeles: el RUC ya está visible en el chip,
+        // se puede seleccionar y copiar a mano.
+      }
+    });
   });
 }
 
@@ -433,6 +489,16 @@ function pintarCard(p){
     p.duracion_ms != null ? formatNumero(p.duracion_ms) + ' ms' : null
   ].filter(Boolean);
 
+  // RUC clickeable para copiar: para replicar un error a mano hay que entrar
+  // con ESA empresa específica y filtrarla por RUC en el modal de login. Sin
+  // esto, encontrar qué empresa produjo una fila del dashboard obliga a ir a
+  // buscarla en la base por el run_id.
+  const rucHtml = p.ruc
+    ? '<span class="chip chip-ruc" data-ruc="' + escapeHtml(p.ruc) + '" title="Click para copiar el RUC">' +
+        '🏢 ' + escapeHtml(p.razon_social || p.ruc) + (p.razon_social ? ' · ' + escapeHtml(p.ruc) : '') +
+      '</span>'
+    : '';
+
   const listaHtml = (titulo, items, clase) => items.length
     ? '<p class="subhead">' + titulo + '</p><ul class="lista ' + clase + '">' +
       items.map(h => '<li>' + escapeHtml(h) + '</li>').join('') + '</ul>'
@@ -445,6 +511,7 @@ function pintarCard(p){
           '<span class="card-id">' + escapeHtml(p.question_id) + ' · ' + escapeHtml(p.categoria || '-') + '</span>' +
           '<div class="card-pregunta">' + escapeHtml(p.pregunta) + '</div>' +
           '<div class="card-meta">' +
+            rucHtml +
             chips.map(c => '<span class="chip">' + escapeHtml(c) + '</span>').join('') +
           '</div>' +
         '</div>' +
