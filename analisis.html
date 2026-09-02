@@ -97,6 +97,8 @@
     color: var(--text); border: 1px solid var(--border); border-radius: 6px;
     padding: 6px 10px; cursor: pointer; max-width: 100%;
   }
+  /* El de entorno es angosto: sus valores son 'prd', 'dev', 'crt'. */
+  select.entorno-select{ max-width: 120px; }
 
   .empty-hint{
     color: var(--muted); font-size: 13px; padding: 40px 10px; text-align:center;
@@ -218,9 +220,12 @@
       <p class="eyebrow">Smarty · Batería de preguntas</p>
       <h1>Análisis de calidad</h1>
       <p class="sub">Veredicto de la IA sobre cada respuesta del agente</p>
-    </div>
+    </div>  
     <div class="top-acciones">
       <a class="nav-volver" href="index_reporte.html">← Conversaciones</a>
+      <select class="run-select entorno-select" id="selectEntorno" title="Filtrar corridas por entorno">
+        <option value="">Todos</option>
+      </select>
       <select class="run-select" id="selectRun">
         <option value="">Cargando corridas...</option>
       </select>
@@ -277,6 +282,7 @@ let datosActuales = null;
 const TIPOS_GRAFICO = ['todos', 'grafico_barras', 'grafico_multilineal', 'grafico_circular', 'tabla', 'sin_grafico'];
 
 const $selectRun = document.getElementById('selectRun');
+const $selectEntorno = document.getElementById('selectEntorno');
 const $btnRefresh = document.getElementById('btnRefresh');
 const $resumen = document.getElementById('resumen');
 const $filtros = document.getElementById('filtros');
@@ -316,6 +322,61 @@ function etiquetaRun(run){
   return empresa + entorno + cuando + total;
 }
 
+/**
+ * Todas las corridas que devolvió el webhook, sin filtrar.
+ *
+ * Se guardan acá porque el filtro de entorno reordena el <select> sin volver a
+ * pedir nada: la lista completa ya vino en una sola llamada y refiltrarla en
+ * memoria es instantáneo.
+ */
+let runsCargados = [];
+
+/** Entorno seleccionado. Cadena vacía = todos. */
+let entornoActivo = '';
+
+/**
+ * Llena el selector de entornos con los que realmente aparecen en los datos.
+ *
+ * No se hardcodean prd/crt/dev: si mañana aparece 'crt-5' o cualquier otro,
+ * entra solo. Una lista fija se desactualiza en silencio y esconde corridas.
+ */
+function pintarSelectorEntornos(runs){
+  const entornos = [...new Set(runs.map(r => r.entorno).filter(Boolean))].sort();
+
+  // Con un solo entorno el filtro no separa nada y solo ocupa lugar.
+  $selectEntorno.style.display = entornos.length > 1 ? '' : 'none';
+
+  const cuenta = e => runs.filter(r => r.entorno === e).length;
+
+  $selectEntorno.innerHTML =
+    '<option value="">Todos (' + runs.length + ')</option>' +
+    entornos
+      .map(e => '<option value="' + escapeHtml(e) + '"' + (e === entornoActivo ? ' selected' : '') + '>' +
+                escapeHtml(e) + ' (' + cuenta(e) + ')</option>')
+      .join('');
+}
+
+/** Repinta el selector de corridas según el entorno activo y abre la primera. */
+function pintarSelectorRuns(){
+  const visibles = entornoActivo
+    ? runsCargados.filter(r => r.entorno === entornoActivo)
+    : runsCargados;
+
+  if (!visibles.length){
+    $selectRun.innerHTML = '<option value="">Sin corridas en este entorno</option>';
+    $preguntas.innerHTML = '<div class="empty-hint">No hay corridas registradas para "' +
+      escapeHtml(entornoActivo) + '".</div>';
+    $resumen.innerHTML = '<div class="empty-hint">Elegí una corrida.</div>';
+    return;
+  }
+
+  $selectRun.innerHTML = visibles
+    .map(r => '<option value="' + escapeHtml(r.run_id) + '">' + escapeHtml(etiquetaRun(r)) + '</option>')
+    .join('');
+
+  cargarAnalisis(visibles[0].run_id);
+}
+
 async function cargarRuns(){
   $selectRun.innerHTML = '<option value="">Cargando corridas...</option>';
   try{
@@ -330,11 +391,16 @@ async function cargarRuns(){
       return;
     }
 
-    $selectRun.innerHTML = runs
-      .map(r => '<option value="' + escapeHtml(r.run_id) + '">' + escapeHtml(etiquetaRun(r)) + '</option>')
-      .join('');
+    runsCargados = runs;
 
-    cargarAnalisis(runs[0].run_id);
+    // Si el entorno que estaba elegido ya no tiene corridas, se vuelve a
+    // "Todos" en vez de dejar la vista vacía sin explicación.
+    if (entornoActivo && !runs.some(r => r.entorno === entornoActivo)){
+      entornoActivo = '';
+    }
+
+    pintarSelectorEntornos(runs);
+    pintarSelectorRuns();
   }catch(err){
     $selectRun.innerHTML = '<option value="">Error al cargar corridas</option>';
     $preguntas.innerHTML = '<div class="empty-hint">No se pudo cargar la lista de corridas (' + escapeHtml(err.message) + ')</div>';
@@ -556,6 +622,12 @@ document.addEventListener('keydown', (ev) => {
 
 // ---- arranque ----
 $selectRun.addEventListener('change', (ev) => cargarAnalisis(ev.target.value));
+$selectEntorno.addEventListener('change', (ev) => {
+  entornoActivo = ev.target.value;
+  // Solo repinta la lista: los runs ya están en memoria, no hay que ir al
+  // webhook de nuevo para filtrar por una columna que ya vino.
+  pintarSelectorRuns();
+});
 $btnRefresh.addEventListener('click', () => {
   const actual = $selectRun.value;
   if (actual) cargarAnalisis(actual); else cargarRuns();
