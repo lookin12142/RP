@@ -543,8 +543,20 @@ function pintarCard(p){
   const hallazgos = Array.isArray(p.hallazgos) ? p.hallazgos : [];
   const problemas = Array.isArray(p.problemas_visuales) ? p.problemas_visuales : [];
 
-  const imagenHtml = p.captura_url
-    ? '<img class="card-img" src="' + escapeHtml(p.captura_url) + '" alt="Captura de ' + escapeHtml(p.question_id) + '" loading="lazy" />'
+  // Desde 2026-09-03 una respuesta puede traer DOS capturas: el gráfico y la
+  // tabla que el front dibuja debajo. La segunda es opcional —una respuesta de
+  // tabla pura o sin_grafico trae una sola tarjeta— así que no se reserva
+  // espacio ni se muestra un hueco cuando falta.
+  const img = (url, etiqueta) =>
+    '<img class="card-img" src="' + escapeHtml(url) +
+    '" alt="' + escapeHtml(etiqueta + ' de ' + p.question_id) + '" loading="lazy" />';
+
+  const imagenes = [];
+  if (p.captura_url)        imagenes.push(img(p.captura_url, 'Captura'));
+  if (p.captura_tabla_url)  imagenes.push(img(p.captura_tabla_url, 'Tabla'));
+
+  const imagenHtml = imagenes.length
+    ? imagenes.join('')
     : '<div class="card-img-empty">Sin captura<br />(' + escapeHtml(p.tipo_grafico || 'sin_grafico') + ')</div>';
 
   const chips = [
