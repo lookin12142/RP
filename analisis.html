@@ -123,6 +123,42 @@
     overflow-x: auto; white-space: pre; color: var(--text);
   }
 
+  /* ---- tiempo por etapa (telemetria) ---- */
+  .tiempos-grupo{ margin-bottom: 20px; }
+  .tiempos-grupo:last-child{ margin-bottom: 0; }
+  .tiempos-grupo h3{
+    font-size: 12px; font-family: var(--mono); color: var(--text);
+    margin: 0 0 8px; font-weight: 600;
+  }
+  .tiempos-tabla{ width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+  .tiempos-tabla th, .tiempos-tabla td{
+    text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border);
+    font-variant-numeric: tabular-nums;
+  }
+  .tiempos-tabla th{
+    color: var(--muted); text-transform: uppercase; font-size: 10.5px;
+    letter-spacing: .04em; font-weight: 500;
+  }
+  .tiempos-tabla tbody tr:last-child td{ border-bottom: none; }
+  /* Card individual: mismo tratamiento que el <details> de SQL, para que se
+     lea como "otro dato técnico opcional", no como algo nuevo que aprender. */
+  .tiempos-detalle{ margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
+  .tiempos-detalle summary{
+    cursor: pointer; font-family: var(--mono); font-size: 12px;
+    color: var(--muted); user-select: none;
+  }
+  .tiempos-detalle summary:hover{ color: var(--text); }
+  .tiempos-lista{
+    font-family: var(--mono); font-size: 12px; margin: 8px 0 0; padding: 0;
+    list-style: none; font-variant-numeric: tabular-nums;
+  }
+  .tiempos-lista li{
+    display: flex; justify-content: space-between; gap: 12px;
+    padding: 3px 0; border-bottom: 1px dashed var(--border);
+  }
+  .tiempos-lista li:last-child{ border-bottom: none; }
+  .tiempos-lista .etapa-modelo{ color: var(--muted); }
+
   .empty-hint{
     color: var(--muted); font-size: 13px; padding: 40px 10px; text-align:center;
     font-family: var(--mono);
@@ -266,6 +302,13 @@
   </section>
 
   <section class="panel">
+    <h2>Tiempo por etapa y modelo</h2>
+    <div id="modelos">
+      <div class="empty-hint">Elegí una corrida.</div>
+    </div>
+  </section>
+
+  <section class="panel">
     <div class="panel-head">
       <h2>Preguntas analizadas</h2>
       <span class="badge pendiente" id="contadorVisible"></span>
@@ -287,8 +330,8 @@
 <script>
 // ---- URLs de los webhooks de n8n ----
 const API = {
-  runs:     'https://n8n.smartclic.pe/webhook/reporte-inteligente-runs',
-  analisis: 'https://n8n.smartclic.pe/webhook/reporte-inteligente-analisis'
+  runs:     'https://erp-n8n.smartclic.pe/webhook/reporte-inteligente-runs1',
+  analisis: 'https://erp-n8n.smartclic.pe/webhook/reporte-inteligente-analisis'
 };
 
 const SEVERIDADES = ['todas', 'grave', 'menor', 'ok', 'pendiente'];
@@ -309,10 +352,23 @@ const $selectRun = document.getElementById('selectRun');
 const $selectEntorno = document.getElementById('selectEntorno');
 const $btnRefresh = document.getElementById('btnRefresh');
 const $resumen = document.getElementById('resumen');
+const $modelos = document.getElementById('modelos');
 const $filtros = document.getElementById('filtros');
 const $preguntas = document.getElementById('preguntas');
 const $contadorVisible = document.getElementById('contadorVisible');
 const $promedioTiempo = document.getElementById('promedioTiempo');
+
+/**
+ * Las 4 etapas que mide el workflow (ver _telemetria en n8n). Cada una tiene
+ * su propio campo de modelo y de duración dentro de `p.telemetria`, así que
+ * comparar "qué modelo tarda más en qué etapa" es agrupar por esos dos campos.
+ */
+const ETAPAS_TELEMETRIA = [
+  { modeloCampo: 'modelo_intencion_consulta', duracionCampo: 'duracion_intencion_consulta_ms', etiqueta: 'Clasificar intención' },
+  { modeloCampo: 'modelo_agente_sql', duracionCampo: 'duracion_agente_sql_ms', etiqueta: 'Escribir SQL' },
+  { modeloCampo: 'modelo_clasificador_grafico', duracionCampo: 'duracion_clasificar_grafico_ms', etiqueta: 'Clasificar tipo de gráfico' },
+  { modeloCampo: 'modelo_graficadora', duracionCampo: 'duracion_armar_grafico_ms', etiqueta: 'Armar respuesta' },
+];
 
 function escapeHtml(str){
   const div = document.createElement('div');
@@ -562,6 +618,8 @@ function pintarPreguntas(preguntas){
     $promedioTiempo.textContent = '';
   }
 
+  pintarModelos(filtradas);
+
   if (!filtradas.length){
     $preguntas.innerHTML = '<div class="empty-hint">Sin preguntas para este filtro.</div>';
     return;
@@ -585,6 +643,82 @@ function pintarPreguntas(preguntas){
       }
     });
   });
+}
+
+/**
+ * Agrupa, por cada una de las 4 etapas, el promedio de duración por modelo
+ * usado en esa etapa — sobre las preguntas actualmente visibles (mismo set
+ * que "Prom. tiempo" de arriba, respeta los filtros de severidad/gráfico).
+ *
+ * Preguntas bloqueadas por seguridad o con intención errónea no pasan por
+ * las 4 etapas y no traen `telemetria`: se excluyen en vez de contarlas como
+ * ceros, que ensuciaría el promedio real de cada modelo.
+ */
+function pintarModelos(preguntas){
+  const conTelemetria = preguntas.filter(p => p.telemetria && typeof p.telemetria === 'object');
+
+  if (!conTelemetria.length){
+    $modelos.innerHTML = '<div class="empty-hint">Sin telemetría para este filtro (corridas viejas, o preguntas que no llegaron a las 4 etapas).</div>';
+    return;
+  }
+
+  const gruposHtml = ETAPAS_TELEMETRIA.map(etapa => {
+    const porModelo = new Map();
+
+    conTelemetria.forEach(p => {
+      const modelo = p.telemetria[etapa.modeloCampo];
+      const ms = Number(p.telemetria[etapa.duracionCampo]);
+      if (!modelo || isNaN(ms)) return;
+      const actual = porModelo.get(modelo) || {total: 0, cuenta: 0};
+      actual.total += ms;
+      actual.cuenta += 1;
+      porModelo.set(modelo, actual);
+    });
+
+    if (!porModelo.size) return '';
+
+    const filasHtml = [...porModelo.entries()]
+      .sort((a, b) => (b[1].total / b[1].cuenta) - (a[1].total / a[1].cuenta))
+      .map(([modelo, stat]) =>
+        '<tr><td>' + escapeHtml(modelo) + '</td>' +
+        '<td>' + formatSegundos(stat.total / stat.cuenta) + '</td>' +
+        '<td>' + stat.cuenta + '</td></tr>'
+      ).join('');
+
+    return '' +
+      '<div class="tiempos-grupo">' +
+        '<h3>' + escapeHtml(etapa.etiqueta) + '</h3>' +
+        '<table class="tiempos-tabla">' +
+          '<thead><tr><th>Modelo</th><th>Promedio</th><th>Preguntas</th></tr></thead>' +
+          '<tbody>' + filasHtml + '</tbody>' +
+        '</table>' +
+      '</div>';
+  }).join('');
+
+  $modelos.innerHTML = gruposHtml || '<div class="empty-hint">Sin telemetría para este filtro.</div>';
+}
+
+/** Desglose de tiempos por etapa de UNA pregunta, para el <details> de su tarjeta. */
+function tiemposDetalleHtml(telemetria){
+  if (!telemetria || typeof telemetria !== 'object') return '';
+
+  const filas = ETAPAS_TELEMETRIA
+    .filter(etapa => telemetria[etapa.duracionCampo] != null)
+    .map(etapa =>
+      '<li><span>' + escapeHtml(etapa.etiqueta) +
+        ' <span class="etapa-modelo">(' + escapeHtml(telemetria[etapa.modeloCampo] || '?') + ')</span></span>' +
+        '<span>' + formatSegundos(telemetria[etapa.duracionCampo]) + '</span></li>'
+    ).join('');
+
+  if (!filas) return '';
+
+  return '' +
+    '<details class="tiempos-detalle">' +
+      '<summary>Tiempo por etapa' +
+        (telemetria.duracion_total_medida_ms != null ? ' (' + formatSegundos(telemetria.duracion_total_medida_ms) + ' medidos)' : '') +
+      '</summary>' +
+      '<ul class="tiempos-lista">' + filas + '</ul>' +
+    '</details>';
 }
 
 function pintarCard(p){
@@ -671,6 +805,7 @@ function pintarCard(p){
           listaHtml('Hallazgos', hallazgos, '') +
           listaHtml('Problemas visuales', problemas, 'problemas') +
           sqlHtml +
+          tiemposDetalleHtml(p.telemetria) +
         '</div>' +
       '</div>' +
     '</div>';
