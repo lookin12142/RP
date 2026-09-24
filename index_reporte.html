@@ -618,7 +618,10 @@ function renderGrafico(g){
     cuerpo = `<div class="grafico-empty">${escapeHtml(g.mensaje || g.comentarios || 'Sin datos para mostrar.')}</div>`;
 
   } else if (tipo === 'tabla'){
-    const filas = Array.isArray(g.tableData) ? g.tableData : [];
+    // La clave cambia según el flujo que la generó: el front del ERP lee
+    // `data || datos_sql`, y algunas versiones del workflow mandaban `tableData`.
+    // Se aceptan las tres para mostrar cualquier respuesta guardada.
+    const filas = [g.datos_sql, g.data, g.tableData].find(Array.isArray) || [];
     cuerpo = renderTablaDinamica(filas);
 
   } else if (tipo === 'grafico_barras'){

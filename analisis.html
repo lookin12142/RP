@@ -269,6 +269,7 @@
     <div class="panel-head">
       <h2>Preguntas analizadas</h2>
       <span class="badge pendiente" id="contadorVisible"></span>
+      <span class="badge pendiente" id="promedioTiempo"></span>
     </div>
     <div id="filtros"></div>
     <div id="preguntas">
@@ -311,6 +312,7 @@ const $resumen = document.getElementById('resumen');
 const $filtros = document.getElementById('filtros');
 const $preguntas = document.getElementById('preguntas');
 const $contadorVisible = document.getElementById('contadorVisible');
+const $promedioTiempo = document.getElementById('promedioTiempo');
 
 function escapeHtml(str){
   const div = document.createElement('div');
@@ -321,6 +323,19 @@ function escapeHtml(str){
 function formatNumero(n){
   const num = Number(n);
   return isNaN(num) ? String(n ?? '-') : num.toLocaleString('es-PE');
+}
+
+/**
+ * Convierte duracion_ms (columna de ri_respuesta) a segundos legibles, ej. "4.2 s".
+ * Con menos de 10 s se muestran 2 decimales para no perder precisión en las
+ * respuestas rápidas; de ahí para arriba alcanza con 1.
+ */
+function formatSegundos(ms){
+  const num = Number(ms);
+  if (isNaN(num)) return '-';
+  const seg = num / 1000;
+  const decimales = seg < 10 ? 2 : 1;
+  return seg.toFixed(decimales) + ' s';
 }
 
 /**
@@ -536,6 +551,17 @@ function pintarPreguntas(preguntas){
 
   $contadorVisible.textContent = filtradas.length + ' de ' + preguntas.length;
 
+  // Promedio del tiempo de respuesta SOLO de lo que está visible con los
+  // filtros activos: recalcula cada vez que se toca un filtro de severidad o
+  // de tipo de gráfico, no queda pegado al total de la corrida.
+  const conTiempo = filtradas.filter(p => p.duracion_ms != null && !isNaN(Number(p.duracion_ms)));
+  if (conTiempo.length){
+    const promedioMs = conTiempo.reduce((acc, p) => acc + Number(p.duracion_ms), 0) / conTiempo.length;
+    $promedioTiempo.textContent = 'Prom. tiempo: ' + formatSegundos(promedioMs);
+  } else {
+    $promedioTiempo.textContent = '';
+  }
+
   if (!filtradas.length){
     $preguntas.innerHTML = '<div class="empty-hint">Sin preguntas para este filtro.</div>';
     return;
@@ -587,7 +613,7 @@ function pintarCard(p){
     p.responde_pregunta ? 'responde: ' + p.responde_pregunta : null,
     p.calidad_datos ? 'datos: ' + p.calidad_datos : null,
     p.grafico_apropiado ? 'gráfico: ' + p.grafico_apropiado : null,
-    p.duracion_ms != null ? formatNumero(p.duracion_ms) + ' ms' : null
+    p.duracion_ms != null ? '⏱ ' + formatSegundos(p.duracion_ms) : null
   ].filter(Boolean);
 
   // RUC clickeable para copiar: para replicar un error a mano hay que entrar
