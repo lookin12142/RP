@@ -457,10 +457,28 @@ async function cargarEntidades(){
     const res = await fetch(API.lista);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
-    pintarEntidades(data.entidades || []);
+    pintarEntidades(ordenarPorMasReciente(data.entidades || []));
   }catch(err){
     $entidades.innerHTML = '<div class="list-empty">No se pudo cargar la lista (' + err.message + ')</div>';
   }
+}
+
+/**
+ * n8n ("Agrupar por entidad") sorts entities by conversation count. The list
+ * should show the most recent activity first: entities ordered by their latest
+ * conversation, and each entity's conversations newest first.
+ */
+function ordenarPorMasReciente(entidades){
+  const ts = (c) => {
+    const t = new Date(c.started_at).getTime();
+    return isNaN(t) ? 0 : t;
+  };
+  return entidades
+    .map(e => {
+      const conversaciones = [...(e.conversaciones || [])].sort((a, b) => ts(b) - ts(a));
+      return { ...e, conversaciones, ultima: conversaciones.length ? ts(conversaciones[0]) : 0 };
+    })
+    .sort((a, b) => b.ultima - a.ultima);
 }
 
 function pintarEntidades(entidades){
@@ -956,7 +974,8 @@ async function cargarFechasDisponibles(){
     const res = await fetch(API.fechas);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
-    const fechas = data.fechas || [];
+    // Supabase returns rows unordered: newest date first, so fechas[0] is the latest day.
+    const fechas = (data.fechas || []).slice().sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
     if (!fechas.length){
       $select.innerHTML = '<option value="">Sin reportes guardados todavía</option>';
       return;
