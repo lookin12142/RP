@@ -194,6 +194,19 @@
   .detalle-item{ font-size:12px; color: var(--muted); font-family: var(--mono); }
   .detalle-item b{ color: var(--text); font-size:14px; }
 
+  /* ---- comparar corridas ---- */
+  .comparar-lista{
+    display:flex; flex-wrap:wrap; gap:8px 16px; max-height: 160px; overflow-y:auto;
+    padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius:8px;
+  }
+  .comparar-check{
+    display:flex; align-items:center; gap:6px; font-family: var(--mono); font-size:12px;
+    color: var(--text); cursor:pointer; white-space: nowrap;
+  }
+  .comparar-check input{ accent-color: var(--accent); cursor:pointer; }
+  #compararResultado .tiempos-tabla td, #compararResultado .tiempos-tabla th{ white-space: nowrap; }
+  #compararResultado{ overflow-x:auto; }
+
   /* ---- filtros ---- */
   .filtros{ display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
   .filtros-grafico{ margin-bottom:18px; }
@@ -282,6 +295,7 @@
     </div>  
     <div class="top-acciones">
       <a class="nav-volver" href="index_reporte.html">← Conversaciones</a>
+      <a class="nav-volver" href="mantenimiento.html">Mantenimiento →</a>
       <select class="run-select entorno-select" id="selectEntorno" title="Filtrar corridas por entorno">
         <option value="">Todos</option>
       </select>
@@ -293,6 +307,51 @@
       </button>
     </div>
   </header>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Comparar corridas</h2>
+      <span class="badge pendiente" id="compararCuenta"></span>
+    </div>
+    <p class="sub" style="margin:-4px 0 14px;">
+      Elegí 2 o más corridas para comparar tiempo de respuesta y calidad (veredicto del juez IA) lado a lado.
+      No sustituye una validación contra respuesta correcta verificada a mano — eso hay que hacerlo aparte
+      (ver <code>respuestas-correctas-agosto-2026.json</code>).
+    </p>
+    <div id="compararLista" class="comparar-lista">
+      <div class="empty-hint">Cargando corridas...</div>
+    </div>
+    <button class="refresh" id="btnComparar" style="margin-top:12px;">Comparar seleccionadas</button>
+    <div id="compararResultado" style="margin-top:18px;"></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Comparar contra Ground Truth</h2>
+      <span class="badge pendiente" id="gtCuenta"></span>
+    </div>
+    <p class="sub" style="margin:-4px 0 14px;">
+      Elegí corridas y compará cada respuesta contra <code>ri_ground_truth</code> (respuesta correcta verificada por SQL).
+      Llama a OpenAI una vez por pregunta pendiente — tiene costo y puede tardar varios minutos, no es instantáneo.
+    </p>
+    <div id="gtLista" class="comparar-lista">
+      <div class="empty-hint">Cargando corridas...</div>
+    </div>
+    <button class="refresh" id="btnGt" style="margin-top:12px;">Comparar contra Ground Truth</button>
+    <div id="gtResultado" style="margin-top:18px;"></div>
+
+    <div class="card" style="margin-top:18px; border-left:3px solid var(--warn);">
+      <p class="subhead">Hallazgos recurrentes (revisión manual ronda 4.1-mini vs ronda SQL-luna, 24 sep 2026)</p>
+      <div class="veredicto">
+        <p>Al validar 50 respuestas contra el ground truth verificado por SQL, la mayoría de las fallas en AMBAS configuraciones fueron el mismo bug, no un tema de capacidad del modelo:</p>
+        <ul class="lista">
+          <li>Enum equivocado: el SQL generado filtra <code>EstadoComprobante = 'ACEPTADO'</code> / <code>'RECHAZADO'</code>, pero el valor real en la base es <code>'EMITIDO'</code> — cualquier pregunta de "aceptados vs rechazados" da 0% para ambos.</li>
+          <li>Listas truncadas sin pedirlo: preguntas sin un "top N" explícito (ej. "todos los comprobantes de la semana") vuelven acotadas a ~20-21 filas igual.</li>
+        </ul>
+        <p>Corregir esos dos puntos en el skill de SQL antes de decidir entre modelos por costo/velocidad — hoy cualquier comparación mide "qué tan bien esquiva cada modelo el mismo error", no la capacidad real de cada uno.</p>
+      </div>
+    </div>
+  </section>
 
   <section class="panel">
     <h2>Resumen de la corrida</h2>
@@ -331,7 +390,9 @@
 // ---- URLs de los webhooks de n8n ----
 const API = {
   runs:     'https://erp-n8n.smartclic.pe/webhook/reporte-inteligente-runs1',
-  analisis: 'https://erp-n8n.smartclic.pe/webhook/reporte-inteligente-analisis'
+  analisis: 'https://erp-n8n.smartclic.pe/webhook/reporte-inteligente-analisis',
+  compararGt: 'https://erp-n8n.smartclic.pe/webhook/reporte-inteligente-comparar-ground-truth',
+  resumenGt: 'https://erp-n8n.smartclic.pe/webhook/reporte-inteligente-comparacion-resumen'
 };
 
 const SEVERIDADES = ['todas', 'grave', 'menor', 'ok', 'pendiente'];
@@ -357,6 +418,14 @@ const $filtros = document.getElementById('filtros');
 const $preguntas = document.getElementById('preguntas');
 const $contadorVisible = document.getElementById('contadorVisible');
 const $promedioTiempo = document.getElementById('promedioTiempo');
+const $compararLista = document.getElementById('compararLista');
+const $btnComparar = document.getElementById('btnComparar');
+const $compararResultado = document.getElementById('compararResultado');
+const $compararCuenta = document.getElementById('compararCuenta');
+const $gtLista = document.getElementById('gtLista');
+const $btnGt = document.getElementById('btnGt');
+const $gtResultado = document.getElementById('gtResultado');
+const $gtCuenta = document.getElementById('gtCuenta');
 
 /**
  * Las 4 etapas que mide el workflow (ver _telemetria en n8n). Cada una tiene
@@ -495,6 +564,8 @@ async function cargarRuns(){
 
     pintarSelectorEntornos(runs);
     pintarSelectorRuns();
+    pintarSelectorComparar(runs);
+    pintarSelectorGt(runs);
   }catch(err){
     $selectRun.innerHTML = '<option value="">Error al cargar corridas</option>';
     $preguntas.innerHTML = '<div class="empty-hint">No se pudo cargar la lista de corridas (' + escapeHtml(err.message) + ')</div>';
@@ -607,9 +678,6 @@ function pintarPreguntas(preguntas){
 
   $contadorVisible.textContent = filtradas.length + ' de ' + preguntas.length;
 
-  // Promedio del tiempo de respuesta SOLO de lo que está visible con los
-  // filtros activos: recalcula cada vez que se toca un filtro de severidad o
-  // de tipo de gráfico, no queda pegado al total de la corrida.
   const conTiempo = filtradas.filter(p => p.duracion_ms != null && !isNaN(Number(p.duracion_ms)));
   if (conTiempo.length){
     const promedioMs = conTiempo.reduce((acc, p) => acc + Number(p.duracion_ms), 0) / conTiempo.length;
@@ -696,6 +764,295 @@ function pintarModelos(preguntas){
   }).join('');
 
   $modelos.innerHTML = gruposHtml || '<div class="empty-hint">Sin telemetría para este filtro.</div>';
+}
+
+/** Llena la lista de checkboxes de "Comparar corridas" con TODAS las corridas cargadas (sin filtrar por entorno: acá interesa poder cruzar corridas de distintos entornos si hace falta). */
+function pintarSelectorComparar(runs){
+  if (!runs.length){
+    $compararLista.innerHTML = '<div class="empty-hint">Sin corridas para comparar.</div>';
+    return;
+  }
+  $compararLista.innerHTML = runs.map(r =>
+    '<label class="comparar-check"><input type="checkbox" value="' + escapeHtml(r.run_id) + '"> ' +
+      escapeHtml(etiquetaRun(r)) +
+    '</label>'
+  ).join('');
+}
+
+function pintarSelectorGt(runs){
+  if (!runs.length){
+    $gtLista.innerHTML = '<div class="empty-hint">Sin corridas.</div>';
+    return;
+  }
+  $gtLista.innerHTML = runs.map(r =>
+    '<label class="comparar-check"><input type="checkbox" value="' + escapeHtml(r.run_id) + '"> ' +
+      escapeHtml(etiquetaRun(r)) +
+    '</label>'
+  ).join('');
+}
+
+async function compararGroundTruth(){
+  const seleccionadas = [...$gtLista.querySelectorAll('input:checked')].map(el => el.value);
+
+  if (!seleccionadas.length){
+    $gtResultado.innerHTML = '<div class="empty-hint">Elegí al menos una corrida.</div>';
+    return;
+  }
+
+  const confirmado = confirm(
+    '¿Comparar ' + seleccionadas.length + ' corrida(s) contra el ground truth?\n\n' +
+    'Esto llama a OpenAI una vez por cada pregunta pendiente (con respuesta correcta cargada ' +
+    'y todavía sin comparar). Tiene costo y puede tardar varios minutos.'
+  );
+  if (!confirmado) return;
+
+  $btnGt.disabled = true;
+  $gtResultado.innerHTML = '<div class="empty-hint">Comparando ' + seleccionadas.length +
+    ' corrida(s) contra ground truth — puede tardar varios minutos, no cierres esta pestaña...</div>';
+
+  // Tiempo promedio y modelos usados no los tiene ri_comparacion_ground_truth
+  // (esa tabla solo guarda veredictos) -- se sacan aparte de ri_respuesta vía
+  // el mismo endpoint que ya usa "Comparar corridas" (obtenerAnalisis), una
+  // llamada por corrida en paralelo.
+  const detallePorCorrida = async (runIds) => {
+    const tiempos = {};
+    const modelos = {};
+    await Promise.all(runIds.map(async (runId) => {
+      try{
+        const data = await obtenerAnalisis(runId);
+        const preguntas = (data && data.preguntas) || [];
+
+        const conTiempo = preguntas.filter(p => p.duracion_ms != null && !isNaN(Number(p.duracion_ms)));
+        tiempos[runId] = conTiempo.length
+          ? conTiempo.reduce((acc, p) => acc + Number(p.duracion_ms), 0) / conTiempo.length
+          : null;
+
+        // Modelo más frecuente por etapa en esta corrida (normalmente es uno
+        // solo fijo durante toda la corrida, pero si alguien cambió "Config
+        // Modelos" a mitad de camino, se muestra el que más se repite).
+        modelos[runId] = ETAPAS_TELEMETRIA.map(etapa => {
+          const conteo = {};
+          preguntas.forEach(p => {
+            const m = p.telemetria && p.telemetria[etapa.modeloCampo];
+            if (m) conteo[m] = (conteo[m] || 0) + 1;
+          });
+          const top = Object.entries(conteo).sort((a, b) => b[1] - a[1])[0];
+          return { etiqueta: etapa.etiqueta, modelo: top ? top[0] : null };
+        });
+      }catch(e){
+        tiempos[runId] = null;
+        modelos[runId] = [];
+      }
+    }));
+    return { tiempos, modelos };
+  };
+
+  const pintarResultadoGt = async (data, nota) => {
+    const pct = data.total_comparadas
+      ? Math.round((data.correcta / data.total_comparadas) * 100)
+      : 0;
+
+    const porCorrida = Array.isArray(data.porCorrida) ? data.porCorrida : [];
+    // Siempre se trae tiempo/modelos, aunque sea 1 sola corrida -- esa info
+    // (qué modelo corrió, cuánto tardó) NO está en las tarjetas de arriba,
+    // así que nunca es redundante, ni con una corrida sola.
+    const { tiempos, modelos } = porCorrida.length
+      ? await detallePorCorrida(porCorrida.map(c => c.run_id))
+      : { tiempos: {}, modelos: {} };
+
+    const tablaPorCorrida = porCorrida.length
+      ? '<table class="tiempos-tabla" style="margin-top:16px;">' +
+          '<thead><tr><th>Corrida</th><th>Modelos usados</th><th>Correctas</th><th>Parciales</th><th>Incorrectas</th>' +
+          '<th>No evaluables</th><th>Total</th><th>% Correctas</th><th>Tiempo promedio</th></tr></thead>' +
+          '<tbody>' +
+            porCorrida.map(c => {
+              const run = runsCargados.find(r => r.run_id === c.run_id);
+              const etiqueta = run ? etiquetaRun(run) : c.run_id;
+              const promedioMs = tiempos[c.run_id];
+              const modelosTexto = (modelos[c.run_id] || [])
+                .filter(m => m.modelo)
+                .map(m => '<b>' + escapeHtml(m.etiqueta) + ':</b> ' + escapeHtml(m.modelo))
+                .join('<br>') || '-';
+              const fallas = Array.isArray(c.fallas) ? c.fallas : [];
+              const filaFallas = fallas.length
+                ? '<tr><td colspan="9" style="padding-top:0;">' +
+                    '<details>' +
+                      '<summary style="cursor:pointer;color:var(--muted);font-size:12px;">Ver ' +
+                        fallas.length + ' falla(s) de esta corrida (motivo del juez)</summary>' +
+                      '<table class="tiempos-tabla" style="margin-top:8px;">' +
+                        '<thead><tr><th>Pregunta</th><th>Veredicto</th><th>Motivo</th></tr></thead>' +
+                        '<tbody>' +
+                          fallas.map(f =>
+                            '<tr><td>' + escapeHtml(f.question_id) + '</td>' +
+                            '<td>' + escapeHtml(f.veredicto) + '</td>' +
+                            '<td style="font-size:12px;">' + escapeHtml(f.diferencia || '-') + '</td></tr>'
+                          ).join('') +
+                        '</tbody>' +
+                      '</table>' +
+                    '</details>' +
+                  '</td></tr>'
+                : '';
+              return '<tr><td>' + escapeHtml(etiqueta) + '</td>' +
+                '<td style="font-size:11px;line-height:1.6;">' + modelosTexto + '</td>' +
+                '<td>' + formatNumero(c.correcta) + '</td>' +
+                '<td>' + formatNumero(c.parcial) + '</td>' +
+                '<td>' + formatNumero(c.incorrecta) + '</td>' +
+                '<td>' + formatNumero(c.no_evaluable) + '</td>' +
+                '<td>' + formatNumero(c.total) + '</td>' +
+                '<td>' + c.pct_correctas + '%</td>' +
+                '<td>' + (promedioMs != null ? formatSegundos(promedioMs) : '-') + '</td></tr>' +
+                filaFallas;
+            }).join('') +
+          '</tbody>' +
+        '</table>'
+      : '';
+
+    $gtResultado.innerHTML =
+      '<div class="resumen-stats">' +
+        '<div class="stat ok"><b>' + formatNumero(data.correcta) + '</b><span>Correctas</span></div>' +
+        '<div class="stat menor"><b>' + formatNumero(data.parcial) + '</b><span>Parciales</span></div>' +
+        '<div class="stat grave"><b>' + formatNumero(data.incorrecta) + '</b><span>Incorrectas</span></div>' +
+        '<div class="stat pendiente"><b>' + formatNumero(data.no_evaluable) + '</b><span>No evaluables</span></div>' +
+      '</div>' +
+      '<p class="sub" style="margin-top:12px;">' + formatNumero(data.total_comparadas) +
+        ' preguntas comparadas en total (' + pct + '% correctas).' +
+        (nota ? ' ' + nota : '') + '</p>' +
+      tablaPorCorrida;
+  };
+
+  try{
+    const res = await fetch(API.compararGt, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ run_ids: seleccionadas })
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok || data.ok !== true){
+      throw new Error(data.error || ('HTTP ' + res.status));
+    }
+
+    await pintarResultadoGt(data);
+  }catch(err){
+    // La llamada principal puede tardar varios minutos (una por pregunta
+    // pendiente) y el gateway delante de n8n corta antes de esos minutos con
+    // un 504 -- el workflow sigue corriendo igual del lado del servidor y las
+    // filas se terminan guardando. Antes de mostrar un error se chequea el
+    // estado REAL en la base con un endpoint liviano (sin llamadas a OpenAI).
+    $gtResultado.innerHTML = '<div class="empty-hint">La llamada se cortó (probable timeout del gateway) — verificando el estado real...</div>';
+    try{
+      const paramRunIds = seleccionadas.map(encodeURIComponent).join(',');
+      const res2 = await fetch(API.resumenGt + '?run_ids=' + paramRunIds);
+      const data2 = await res2.json().catch(() => ({}));
+      if (res2.ok && data2.ok === true){
+        await pintarResultadoGt(data2, '(la llamada original se cortó por timeout, pero el proceso terminó bien en el servidor — esto es lo que quedó guardado.)');
+      } else {
+        $gtResultado.innerHTML = '<div class="empty-hint">No se pudo comparar ni verificar el estado (' + escapeHtml(err.message) + ')</div>';
+      }
+    }catch(err2){
+      $gtResultado.innerHTML = '<div class="empty-hint">No se pudo comparar (' + escapeHtml(err.message) + ')</div>';
+    }
+  }finally{
+    $btnGt.disabled = false;
+  }
+}
+
+/** Trae el análisis de UNA corrida sin tocar `datosActuales` (esa variable es del panel de arriba). */
+async function obtenerAnalisis(runId){
+  const res = await fetch(API.analisis + '?run_id=' + encodeURIComponent(runId));
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  return Array.isArray(data) ? data[0] : data;
+}
+
+async function compararCorridas(){
+  const seleccionadas = [...$compararLista.querySelectorAll('input:checked')].map(el => el.value);
+
+  if (seleccionadas.length < 2){
+    $compararResultado.innerHTML = '<div class="empty-hint">Elegí al menos 2 corridas.</div>';
+    return;
+  }
+
+  $compararCuenta.textContent = seleccionadas.length + ' seleccionadas';
+  $compararResultado.innerHTML = '<div class="empty-hint">Cargando ' + seleccionadas.length + ' corridas...</div>';
+
+  try{
+    const traidas = await Promise.all(
+      seleccionadas.map(id => obtenerAnalisis(id).then(data => ({ id, data })))
+    );
+    pintarComparacion(traidas);
+  }catch(err){
+    $compararResultado.innerHTML = '<div class="empty-hint">No se pudo comparar (' + escapeHtml(err.message) + ')</div>';
+  }
+}
+
+/**
+ * Tabla lado a lado de N corridas: cantidad, veredicto del juez IA (ok/menor/
+ * grave/pendiente) y tiempo promedio total + por etapa y modelo.
+ *
+ * El % de "ok" acá es el veredicto del JUEZ IA (consistencia interna: ¿la
+ * respuesta coincide con su propio SQL?), no una validación contra la
+ * respuesta correcta real -- esa comparación es manual, ver el hallazgo fijo
+ * más abajo de esta sección.
+ */
+function pintarComparacion(traidas){
+  const pct = (n, total) => total ? Math.round((Number(n || 0) / total) * 100) : 0;
+
+  const columnas = traidas.map(({ id, data }) => {
+    const preguntas = data && data.preguntas || [];
+    const resumen = data && data.resumen || {};
+    const total = resumen.total_preguntas ?? preguntas.length;
+    const conTiempo = preguntas.filter(p => p.duracion_ms != null && !isNaN(Number(p.duracion_ms)));
+    const promedioMs = conTiempo.length
+      ? conTiempo.reduce((acc, p) => acc + Number(p.duracion_ms), 0) / conTiempo.length
+      : null;
+    const run = runsCargados.find(r => r.run_id === id);
+    return { id, etiqueta: run ? etiquetaRun(run) : id, total, resumen, promedioMs, preguntas };
+  });
+
+  const headHtml = '<th>Métrica</th>' +
+    columnas.map(c => '<th>' + escapeHtml(c.etiqueta) + '</th>').join('');
+
+  const filasResumen = [
+    ['Preguntas', c => formatNumero(c.total)],
+    ['Ok (juez IA)', c => formatNumero(c.resumen.ok ?? 0) + ' (' + pct(c.resumen.ok, c.total) + '%)'],
+    ['Menores', c => formatNumero(c.resumen.menores ?? 0) + ' (' + pct(c.resumen.menores, c.total) + '%)'],
+    ['Graves', c => formatNumero(c.resumen.graves ?? 0) + ' (' + pct(c.resumen.graves, c.total) + '%)'],
+    ['Sin analizar', c => formatNumero(c.resumen.pendientes ?? 0)],
+    ['Tiempo promedio', c => c.promedioMs != null ? formatSegundos(c.promedioMs) : '-'],
+  ].map(([etiqueta, valor]) =>
+    '<tr><td>' + etiqueta + '</td>' + columnas.map(c => '<td>' + valor(c) + '</td>').join('') + '</tr>'
+  ).join('');
+
+  // Por etapa: promedio y modelo(s) usados en esa corrida. Si una corrida mezcló
+  // modelos a mitad de camino (cambio de Config Modelos entre preguntas) se
+  // listan todos, no se elige uno arbitrariamente.
+  const filasEtapas = ETAPAS_TELEMETRIA.map(etapa => {
+    const celdas = columnas.map(c => {
+      const porModelo = new Map();
+      c.preguntas.forEach(p => {
+        if (!p.telemetria) return;
+        const modelo = p.telemetria[etapa.modeloCampo];
+        const ms = Number(p.telemetria[etapa.duracionCampo]);
+        if (!modelo || isNaN(ms)) return;
+        const actual = porModelo.get(modelo) || { total: 0, cuenta: 0 };
+        actual.total += ms; actual.cuenta += 1;
+        porModelo.set(modelo, actual);
+      });
+      if (!porModelo.size) return '<td>-</td>';
+      const texto = [...porModelo.entries()]
+        .map(([modelo, s]) => escapeHtml(modelo) + ': ' + formatSegundos(s.total / s.cuenta))
+        .join('<br>');
+      return '<td>' + texto + '</td>';
+    }).join('');
+    return '<tr><td>' + escapeHtml(etapa.etiqueta) + '</td>' + celdas + '</tr>';
+  }).join('');
+
+  $compararResultado.innerHTML =
+    '<table class="tiempos-tabla">' +
+      '<thead><tr>' + headHtml + '</tr></thead>' +
+      '<tbody>' + filasResumen + filasEtapas + '</tbody>' +
+    '</table>';
 }
 
 /** Desglose de tiempos por etapa de UNA pregunta, para el <details> de su tarjeta. */
@@ -842,6 +1199,8 @@ $selectEntorno.addEventListener('change', (ev) => {
   // webhook de nuevo para filtrar por una columna que ya vino.
   pintarSelectorRuns();
 });
+$btnComparar.addEventListener('click', compararCorridas);
+$btnGt.addEventListener('click', compararGroundTruth);
 $btnRefresh.addEventListener('click', () => {
   const actual = $selectRun.value;
   if (actual) cargarAnalisis(actual); else cargarRuns();

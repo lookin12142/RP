@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mantenimiento · Reporte Inteligente</title>
+<style>
+  :root{
+    --bg: #10131a;
+    --panel: #171b24;
+    --panel-2: #1d2230;
+    --border: #262c3a;
+    --text: #e7e9ee;
+    --muted: #8991a3;
+    --accent: #5b8def;
+    --accent-soft: rgba(91,141,239,0.12);
+    --warn: #f2b84b;
+    --danger: #f25a5a;
+    --assistant: #34d399;
+    --mono: 'IBM Plex Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+    --sans: 'Inter', 'IBM Plex Sans', -apple-system, sans-serif;
+  }
+  *{ box-sizing: border-box; }
+  html,body{
+    margin:0; padding:0; background:var(--bg); color:var(--text);
+    font-family: var(--sans); -webkit-font-smoothing: antialiased;
+  }
+  a{ color: inherit; }
+
+  .wrap{ max-width: 900px; margin: 0 auto; padding: 28px 24px 80px; }
+
+  header.top{
+    display:flex; align-items:baseline; justify-content: space-between;
+    gap: 16px; margin-bottom: 12px; flex-wrap: wrap;
+  }
+  .eyebrow{
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 4px;
+  }
+  h1{ font-size: 22px; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+  .sub{ color: var(--muted); font-size: 13px; margin-top: 4px; }
+
+  a.nav-volver{
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.03em;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 16px; text-decoration: none;
+    display:flex; align-items:center; gap:8px;
+    transition: border-color .15s, background .15s;
+  }
+  a.nav-volver:hover{ border-color: var(--accent); background: var(--accent-soft); }
+  a.nav-volver:focus-visible{ outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  section.panel{
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px; margin-bottom: 20px;
+  }
+  .panel-head{
+    display:flex; align-items:center; justify-content: space-between;
+    flex-wrap: wrap; gap: 10px; margin-bottom: 16px;
+  }
+  .panel-head h2{
+    font-size: 13px; font-family: var(--mono); text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--muted); margin: 0; font-weight: 500;
+  }
+
+  button.refresh{
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.03em;
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    padding: 10px 16px; border-radius: 8px; cursor: pointer;
+    display:flex; align-items:center; gap:8px; transition: border-color .15s, background .15s;
+  }
+  button.refresh:hover{ border-color: var(--accent); background: var(--accent-soft); }
+  button.refresh:disabled{ opacity: .5; cursor: default; }
+
+  .empty-hint{
+    color: var(--muted); font-size: 13px; padding: 40px 10px; text-align:center;
+    font-family: var(--mono);
+  }
+
+  .badge{
+    font-family: var(--mono); font-size: 10.5px; padding: 2px 8px; border-radius: 999px;
+    display:inline-block; white-space: nowrap; background: var(--panel-2); color: var(--muted);
+    border: 1px solid var(--border);
+  }
+
+  .comparar-lista{
+    display:flex; flex-wrap:wrap; gap:8px 16px; max-height: 320px; overflow-y:auto;
+    padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius:8px;
+  }
+  .comparar-check{
+    display:flex; align-items:center; gap:6px; font-family: var(--mono); font-size:12px;
+    color: var(--text); cursor:pointer; white-space: nowrap;
+  }
+  .comparar-check input{ accent-color: var(--accent); cursor:pointer; }
+
+  .lista{ margin:6px 0 0; padding-left:18px; font-size:12.5px; line-height:1.6; color: var(--text); }
+  .lista.problemas{ color: var(--danger); }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="top">
+    <div>
+      <p class="eyebrow">Smarty · Mantenimiento</p>
+      <h1>Borrar corridas</h1>
+      <p class="sub">Limpieza de corridas fallidas o viejas — separado del análisis para no acumular acá lo que no se usa junto.</p>
+    </div>
+    <a class="nav-volver" href="analisis.html">← Análisis</a>
+  </header>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Corridas</h2>
+      <span class="badge" id="borrarCuenta"></span>
+    </div>
+    <p class="sub" style="margin:-4px 0 14px;">
+      Elegí corridas fallidas o viejas que ya no sirven y borralas: se elimina la fila de <code>ri_run</code>,
+      sus respuestas y análisis en Supabase, y las capturas del bucket. <b>Es permanente, no hay deshacer.</b>
+      En rojo <code>[sin terminar]</code>, en amarillo las que terminaron con fallas parciales.
+    </p>
+    <div id="borrarLista" class="comparar-lista">
+      <div class="empty-hint">Cargando corridas...</div>
+    </div>
+    <div style="display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;">
+      <button class="refresh" id="btnRefresh">↻ Actualizar</button>
+      <button class="refresh" id="btnBorrar" style="border-color: var(--danger); color: var(--danger);">
+        🗑 Borrar seleccionadas
+      </button>
+    </div>
+    <div id="borrarResultado" style="margin-top:14px;"></div>
+  </section>
+
+</div>
+
+<script>
+const API = {
+  runs:   'https://erp-n8n.smartclic.pe/webhook/reporte-inteligente-runs1',
+  borrar: 'https://erp-n8n.smartclic.pe/webhook/reporte-inteligente-borrar-corrida'
+};
+
+const $borrarLista = document.getElementById('borrarLista');
+const $btnBorrar = document.getElementById('btnBorrar');
+const $btnRefresh = document.getElementById('btnRefresh');
+const $borrarResultado = document.getElementById('borrarResultado');
+const $borrarCuenta = document.getElementById('borrarCuenta');
+
+function escapeHtml(str){
+  const div = document.createElement('div');
+  div.textContent = str ?? '';
+  return div.innerHTML;
+}
+
+function formatNumero(n){
+  const num = Number(n);
+  return isNaN(num) ? String(n ?? '-') : num.toLocaleString('es-PE');
+}
+
+/** Misma etiqueta que en analisis.html, para reconocer la corrida de un vistazo. */
+function etiquetaRun(run){
+  const fecha = run.iniciado_en || run.run_id;
+  const d = new Date(fecha);
+  const cuando = isNaN(d.getTime())
+    ? run.run_id
+    : d.toLocaleString('es-PE', { dateStyle: 'medium', timeStyle: 'short' });
+
+  const empresa = run.razon_social || run.ruc
+    ? (run.razon_social ? run.razon_social + ' · ' : '') + (run.ruc ? run.ruc + ' · ' : '')
+    : '';
+  const entorno = run.entorno ? run.entorno + ' · ' : '';
+  const total = run.preguntas_guardadas != null ? ' (' + run.preguntas_guardadas + ')' : '';
+  return empresa + entorno + cuando + total;
+}
+
+let runsCargados = [];
+
+async function cargarRuns(){
+  $borrarLista.innerHTML = '<div class="empty-hint">Cargando corridas...</div>';
+  try{
+    const res = await fetch(API.runs);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const runs = Array.isArray(data) ? data : (data.runs || []);
+    runsCargados = runs;
+    $borrarCuenta.textContent = runs.length + ' corridas';
+    pintarSelectorBorrar(runs);
+  }catch(err){
+    $borrarLista.innerHTML = '<div class="empty-hint">No se pudo cargar la lista (' + escapeHtml(err.message) + ')</div>';
+  }
+}
+
+/** Llena la lista de checkboxes marcando sin terminar / con fallas para que salten a la vista. */
+function pintarSelectorBorrar(runs){
+  if (!runs.length){
+    $borrarLista.innerHTML = '<div class="empty-hint">Sin corridas.</div>';
+    return;
+  }
+  $borrarLista.innerHTML = runs.map(r => {
+    const marca = !r.finalizado_en
+      ? ' <span style="color:var(--danger)">[sin terminar]</span>'
+      : (r.total_preguntas && r.total_ok != null && r.total_ok < r.total_preguntas
+          ? ' <span style="color:var(--warn)">[' + formatNumero(r.total_ok) + '/' + formatNumero(r.total_preguntas) + ']</span>'
+          : '');
+    return '<label class="comparar-check"><input type="checkbox" value="' + escapeHtml(r.run_id) + '"> ' +
+      escapeHtml(etiquetaRun(r)) + marca +
+    '</label>';
+  }).join('');
+}
+
+/** Borra en Supabase (data + capturas del bucket) las corridas tildadas. */
+async function borrarCorridas(){
+  const seleccionadas = [...$borrarLista.querySelectorAll('input:checked')].map(el => el.value);
+
+  if (!seleccionadas.length){
+    $borrarResultado.innerHTML = '<div class="empty-hint">Elegí al menos una corrida.</div>';
+    return;
+  }
+
+  const confirmado = confirm(
+    '¿Borrar ' + seleccionadas.length + ' corrida(s)?\n\n' +
+    'Esto elimina para siempre sus filas en Supabase (ri_run, ri_respuesta, ri_analisis) ' +
+    'y las capturas del bucket. No hay forma de deshacerlo.'
+  );
+  if (!confirmado) return;
+
+  $btnBorrar.disabled = true;
+  $borrarResultado.innerHTML = '<div class="empty-hint">Borrando ' + seleccionadas.length + ' corrida(s)...</div>';
+
+  const resultados = [];
+  for (const runId of seleccionadas){
+    try{
+      const res = await fetch(API.borrar, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ run_id: runId })
+      });
+      const data = await res.json().catch(() => ({}));
+      resultados.push({ runId, ok: res.ok && data.ok === true, data });
+    }catch(err){
+      resultados.push({ runId, ok: false, error: err.message });
+    }
+  }
+
+  $btnBorrar.disabled = false;
+
+  $borrarResultado.innerHTML = '<ul class="lista">' +
+    resultados.map(r => r.ok
+      ? '<li>✓ ' + escapeHtml(r.runId) + ' — ' + formatNumero(r.data.respuestas_borradas) +
+        ' respuestas, ' + formatNumero(r.data.archivos_borrados) + ' archivos borrados</li>'
+      : '<li class="problemas">✗ ' + escapeHtml(r.runId) + ' — ' +
+        escapeHtml(r.error || (r.data && r.data.error) || 'error desconocido') + '</li>'
+    ).join('') +
+  '</ul>';
+
+  cargarRuns();
+}
+
+$btnBorrar.addEventListener('click', borrarCorridas);
+$btnRefresh.addEventListener('click', cargarRuns);
+window.addEventListener('DOMContentLoaded', cargarRuns);
+</script>
+
+</body>
+</html>
